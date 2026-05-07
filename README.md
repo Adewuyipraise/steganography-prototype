@@ -57,7 +57,7 @@ pip package manager
 
 # Installation
 # Clone the repository
-git clone https://github.com/YOUR_USERNAME/steganography-prototype.git
+git clone https://github.com/Adewuyipraise/steganography-prototype.git
 cd steganography-prototype
 
 # Install dependencies
@@ -68,25 +68,9 @@ python web_app.py
 
 Open your browser to: http://localhost:5000
 
-## 📁 Project Structure   
-steganography-prototype/
-│
-├── web_app.py              # Flask web interface
-├── main.py                 # CLI simulation & comparison
-├── embedding.py            # DCT + edge adaptive embedding
-├── extraction.py           # DCT bit extraction
-├── error_correction.py     # Hamming (7,4) implementation
-├── baselines.py            # LSB & DCT-no-EC methods
-├── robustness_tests.py     # Image transformations
-├── evaluation.py           # Metrics calculation
-├── config.py               # Configuration parameters
-├── templates/
-│   └── index.html          # Web UI template
-├── requirements.txt        # Python dependencies
-└── README.md               # This file
 
 ## 🖥️ Usage
-Web Interface (Recommended)
+Web Interface
 
 run 
 ```bash
