@@ -3,9 +3,7 @@ services:
     name: steganography-prototype
     runtime: python
     plan: free
-    region: frankfurt  # Good for Europe/Africa
+    region: frankfurt
     buildCommand: pip install -r requirements.txt
     startCommand: gunicorn web_app:app
-    envVars:
-      - key: PYTHON_VERSION
-        value: 3.11.0
+    pythonVersion: 3.11.0
