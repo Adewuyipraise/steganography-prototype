@@ -129,10 +129,11 @@ Improves robustness under JPEG compression
   </sub>
   
   <br/>
+  <br/>
   
   [![GitHub](https://img.shields.io/badge/GitHub-Pesedie_Rasheed-181717?style=flat-square&logo=github)](https://github.com/Adewuyipraise)
   [![LinkedIn](https://img.shields.io/badge/LinkedIn-Pesedie_Rasheed-0077B5?style=flat-square&logo=linkedin)](https://linkedin.com/in/pesedierasheed)
-  [![Email](https://img.shields.io/badge/Email-pesedie@example.com-D14836?style=flat-square&logo=gmail)](mailto:rasheedpesedie@gmail.com)
+  [![Email](https://img.shields.io/badge/Email-rasheedpesedie@gmail.com-D14836?style=flat-square&logo=gmail)](mailto:rasheedpesedie@gmail.com)
   
 </div>
 
