@@ -1,0 +1,14 @@
+__pycache__/
+*.pyc
+uploads/
+results/
+stego_*.png
+*.db
+.env
+venv/
+.DS_Store
+*.log
+venv/
+env/
+VENV/
+__pycache__/

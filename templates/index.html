@@ -1,0 +1,514 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Steganography Prototype - Hide Secret Messages in Images</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            padding: 20px;
+        }
+        
+        .container {
+            max-width: 1400px;
+            margin: 0 auto;
+        }
+        
+        h1 {
+            text-align: center;
+            color: white;
+            margin-bottom: 10px;
+            font-size: 2.5em;
+        }
+        
+        .subtitle {
+            text-align: center;
+            color: rgba(255,255,255,0.9);
+            margin-bottom: 30px;
+        }
+        
+        .tabs {
+            display: flex;
+            gap: 10px;
+            margin-bottom: 20px;
+            justify-content: center;
+        }
+        
+        .tab {
+            padding: 12px 24px;
+            background: rgba(255,255,255,0.2);
+            border: none;
+            border-radius: 8px;
+            color: white;
+            cursor: pointer;
+            font-size: 16px;
+            transition: all 0.3s;
+        }
+        
+        .tab.active {
+            background: white;
+            color: #667eea;
+        }
+        
+        .tab:hover {
+            background: rgba(255,255,255,0.3);
+        }
+        
+        .panel {
+            display: none;
+            background: white;
+            border-radius: 16px;
+            padding: 30px;
+            box-shadow: 0 20px 40px rgba(0,0,0,0.1);
+        }
+        
+        .panel.active {
+            display: block;
+        }
+        
+        .grid-2 {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 30px;
+        }
+        
+        .upload-area {
+            border: 2px dashed #ddd;
+            border-radius: 12px;
+            padding: 40px;
+            text-align: center;
+            cursor: pointer;
+            transition: all 0.3s;
+        }
+        
+        .upload-area:hover {
+            border-color: #667eea;
+            background: #f8f9ff;
+        }
+        
+        .upload-area input {
+            display: none;
+        }
+        
+        .preview-image {
+            max-width: 100%;
+            max-height: 300px;
+            border-radius: 8px;
+            margin-top: 15px;
+        }
+        
+        textarea, select, input[type="text"] {
+            width: 100%;
+            padding: 12px;
+            border: 1px solid #ddd;
+            border-radius: 8px;
+            font-size: 14px;
+            margin-bottom: 15px;
+        }
+        
+        textarea {
+            min-height: 120px;
+            resize: vertical;
+        }
+        
+        button {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            border: none;
+            padding: 14px 28px;
+            border-radius: 8px;
+            font-size: 16px;
+            cursor: pointer;
+            transition: transform 0.2s;
+        }
+        
+        button:hover {
+            transform: translateY(-2px);
+        }
+        
+        .result-card {
+            background: #f8f9fa;
+            border-radius: 12px;
+            padding: 20px;
+            margin-top: 20px;
+        }
+        
+        .metrics {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+            gap: 15px;
+            margin: 20px 0;
+        }
+        
+        .metric {
+            background: white;
+            padding: 15px;
+            border-radius: 8px;
+            text-align: center;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        }
+        
+        .metric-value {
+            font-size: 24px;
+            font-weight: bold;
+            color: #667eea;
+        }
+        
+        .metric-label {
+            font-size: 12px;
+            color: #666;
+            margin-top: 5px;
+        }
+        
+        .success {
+            color: #10b981;
+        }
+        
+        .error {
+            color: #ef4444;
+        }
+        
+        .loading {
+            display: inline-block;
+            width: 20px;
+            height: 20px;
+            border: 2px solid #f3f3f3;
+            border-top: 2px solid #667eea;
+            border-radius: 50%;
+            animation: spin 1s linear infinite;
+        }
+        
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+        
+        @media (max-width: 768px) {
+            .grid-2 {
+                grid-template-columns: 1fr;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>🖼️ Steganography Prototype</h1>
+        <p class="subtitle">Hide secret messages in images using DCT + Hamming(7,4) Error Correction</p>
+        
+        <div class="tabs">
+            <button class="tab active" onclick="showPanel('embed')">🔒 Embed Message</button>
+            <button class="tab" onclick="showPanel('extract')">🔓 Extract Message</button>
+            <button class="tab" onclick="showPanel('compare')">📊 Compare Methods</button>
+        </div>
+        
+        <!-- Embed Panel -->
+        <div id="embedPanel" class="panel active">
+            <div class="grid-2">
+                <div>
+                    <h3>📤 Upload Cover Image</h3>
+                    <div class="upload-area" onclick="document.getElementById('embedImage').click()">
+                        <input type="file" id="embedImage" accept="image/*" onchange="previewImage(this, 'embedPreview')">
+                        <p>📁 Click to upload or drag & drop</p>
+                        <p style="font-size: 12px; color: #666;">PNG, JPG, JPEG supported</p>
+                        <img id="embedPreview" class="preview-image" style="display: none;">
+                    </div>
+                    
+                    <h3 style="margin-top: 20px;">📝 Secret Message</h3>
+                    <textarea id="secretMessage" placeholder="Enter your secret message here..."></textarea>
+                    
+                    <h3>⚙️ Select Method</h3>
+                    <select id="embedMethod">
+                        <option value="proposed">✅ Proposed (DCT + Hamming + Edge Detection) - BEST</option>
+                        <option value="dct_no_ec">📊 DCT without Error Correction</option>
+                        <option value="lsb">💾 LSB Spatial Domain</option>
+                    </select>
+                    
+                    <button onclick="embedMessage()">🚀 Hide Message & Download</button>
+                </div>
+                
+                <div id="embedResult">
+                    <h3>📊 Results</h3>
+                    <div class="result-card">
+                        <p>Results will appear here after embedding...</p>
+                    </div>
+                </div>
+            </div>
+        </div>
+        
+        <!-- Extract Panel -->
+        <div id="extractPanel" class="panel">
+            <div class="grid-2">
+                <div>
+                    <h3>📥 Upload Stego Image</h3>
+                    <div class="upload-area" onclick="document.getElementById('extractImage').click()">
+                        <input type="file" id="extractImage" accept="image/*" onchange="previewImage(this, 'extractPreview')">
+                        <p>📁 Click to upload image with hidden message</p>
+                        <img id="extractPreview" class="preview-image" style="display: none;">
+                    </div>
+                            
+                    <h3>⚙️ Method Used (for extraction)</h3>
+                    <div class="warning-box" style="background: #fff3cd; border: 1px solid #ffc107; padding: 15px; border-radius: 8px; margin-bottom: 20px;">
+                        <strong>⚠️ IMPORTANT:</strong>
+                        <p>You must use the SAME method for extraction that was used for embedding!</p>
+                        <ul>
+                            <li>🔷 DCT+Hamming → Extract with DCT+Hamming</li>
+                            <li>🔶 DCT only → Extract with DCT only</li>
+                            <li>⬛ LSB → Extract with LSB</li>
+                        </ul>
+                    </div>
+
+                    <select id="extractMethod">
+                        <option value="proposed">🔷 Proposed (DCT + Hamming) - Use if embedded with proposed</option>
+                        <option value="dct_no_ec">🔶 DCT without EC - Use if embedded with DCT only</option>
+                        <option value="lsb">⬛ LSB Spatial - Use if embedded with LSB</option>
+                    </select>
+                    
+                    <input type="number" id="messageLength" placeholder="Approximate message length (characters)" value="100">
+                    
+                    <button onclick="extractMessage()">🔍 Extract Hidden Message</button>
+                </div>
+                
+                <div id="extractResult">
+                    <h3>📄 Extracted Message</h3>
+                    <div class="result-card">
+                        <p>Results will appear here...</p>
+                    </div>
+                </div>
+            </div>
+        </div>
+        
+        <!-- Compare Panel -->
+        <div id="comparePanel" class="panel">
+            <div class="grid-2">
+                <div>
+                    <h3>📤 Upload Image for Comparison</h3>
+                    <div class="upload-area" onclick="document.getElementById('compareImage').click()">
+                        <input type="file" id="compareImage" accept="image/*" onchange="previewImage(this, 'comparePreview')">
+                        <p>📁 Click to upload test image</p>
+                        <img id="comparePreview" class="preview-image" style="display: none;">
+                    </div>
+                    
+                    <h3>📝 Test Message</h3>
+                    <textarea id="compareMessage" placeholder="Enter a test message...">This is a secret test message for comparison!</textarea>
+                    
+                    <button onclick="compareMethods()">🔬 Compare All Methods</button>
+                </div>
+                
+                <div id="compareResult">
+                    <h3>📊 Method Comparison</h3>
+                    <div class="result-card">
+                        <p>Results will appear here...</p>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+    
+    <script>
+        function showPanel(panel) {
+            document.querySelectorAll('.panel').forEach(p => p.classList.remove('active'));
+            document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+            
+            document.getElementById(panel + 'Panel').classList.add('active');
+            event.target.classList.add('active');
+        }
+        
+        function previewImage(input, previewId) {
+            if (input.files && input.files[0]) {
+                const reader = new FileReader();
+                reader.onload = function(e) {
+                    const preview = document.getElementById(previewId);
+                    preview.src = e.target.result;
+                    preview.style.display = 'block';
+                }
+                reader.readAsDataURL(input.files[0]);
+            }
+        }
+        
+        async function embedMessage() {
+            const imageFile = document.getElementById('embedImage').files[0];
+            const message = document.getElementById('secretMessage').value;
+            const method = document.getElementById('embedMethod').value;
+            
+            if (!imageFile) {
+                alert('Please select an image');
+                return;
+            }
+            if (!message) {
+                alert('Please enter a secret message');
+                return;
+            }
+            
+            const formData = new FormData();
+            formData.append('image', imageFile);
+            formData.append('message', message);
+            formData.append('method', method);
+            
+            const resultDiv = document.getElementById('embedResult');
+            resultDiv.innerHTML = '<div class="result-card"><div class="loading"></div> Processing...</div>';
+            
+            try {
+                const response = await fetch('/embed', {
+                    method: 'POST',
+                    body: formData
+                });
+                const data = await response.json();
+                
+                if (data.success) {
+                    resultDiv.innerHTML = `
+                        <div class="result-card">
+                            <h4>✅ Success!</h4>
+                            <img src="${data.stego_image}" style="max-width: 100%; border-radius: 8px;">
+                            <div class="metrics">
+                                <div class="metric">
+                                    <div class="metric-value">${data.metrics.psnr} dB</div>
+                                    <div class="metric-label">PSNR (Image Quality)</div>
+                                </div>
+                                <div class="metric">
+                                    <div class="metric-value">${data.metrics.recovery_accuracy}%</div>
+                                    <div class="metric-label">Recovery Accuracy</div>
+                                </div>
+                                <div class="metric">
+                                    <div class="metric-value">${data.metrics.ber}</div>
+                                    <div class="metric-label">Bit Error Rate</div>
+                                </div>
+                            </div>
+                            <p><strong>Method:</strong> ${data.method}</p>
+                            <p><strong>Recovered:</strong> "${data.metrics.message_recovered}"</p>
+                            <p class="${data.metrics.message_matches ? 'success' : 'error'}">
+                                ${data.metrics.message_matches ? '✓ Message verified!' : '⚠ Message verification failed'}
+                            </p>
+                            <button onclick="downloadImage('${data.output_path}')">💾 Download Stego Image</button>
+                        </div>
+                    `;
+                } else {
+                    resultDiv.innerHTML = `<div class="result-card"><p class="error">❌ Error: ${data.error}</p></div>`;
+                }
+            } catch (error) {
+                resultDiv.innerHTML = `<div class="result-card"><p class="error">❌ Error: ${error.message}</p></div>`;
+            }
+        }
+        
+        async function extractMessage() {
+            const imageFile = document.getElementById('extractImage').files[0];
+            const method = document.getElementById('extractMethod').value;
+            const messageLength = document.getElementById('messageLength').value;
+            
+            if (!imageFile) {
+                alert('Please upload a stego image');
+                return;
+            }
+            
+            const formData = new FormData();
+            formData.append('image', imageFile);
+            formData.append('method', method);
+            formData.append('message_length', messageLength);
+            
+            const resultDiv = document.getElementById('extractResult');
+            resultDiv.innerHTML = '<div class="result-card"><div class="loading"></div> Extracting...</div>';
+            
+            try {
+                const response = await fetch('/extract', {
+                    method: 'POST',
+                    body: formData
+                });
+                const data = await response.json();
+                
+                if (data.success) {
+                    resultDiv.innerHTML = `
+                        <div class="result-card">
+                            <h4>🔓 Message Extracted!</h4>
+                            <div class="metric">
+                                <div class="metric-value">${data.message_length} chars</div>
+                                <div class="metric-label">Message Length</div>
+                            </div>
+                            <p><strong>Method:</strong> ${data.method}</p>
+                            <p><strong>Extracted Message:</strong></p>
+                            <textarea rows="6" style="width: 100%; font-family: monospace;">${data.extracted_message}</textarea>
+                        </div>
+                    `;
+                } else {
+                    resultDiv.innerHTML = `<div class="result-card"><p class="error">❌ Error: ${data.error}</p></div>`;
+                }
+            } catch (error) {
+                resultDiv.innerHTML = `<div class="result-card"><p class="error">❌ Error: ${error.message}</p></div>`;
+            }
+        }
+        
+        async function compareMethods() {
+            const imageFile = document.getElementById('compareImage').files[0];
+            const message = document.getElementById('compareMessage').value;
+            
+            if (!imageFile) {
+                alert('Please upload an image');
+                return;
+            }
+            
+            const formData = new FormData();
+            formData.append('image', imageFile);
+            formData.append('message', message);
+            
+            const resultDiv = document.getElementById('compareResult');
+            resultDiv.innerHTML = '<div class="result-card"><div class="loading"></div> Comparing methods...</div>';
+            
+            try {
+                const response = await fetch('/compare', {
+                    method: 'POST',
+                    body: formData
+                });
+                const data = await response.json();
+                
+                if (data.success) {
+                    let html = '<div class="result-card"><h4>📊 Comparison Results</h4><div class="metrics">';
+                    
+                    for (const [key, result] of Object.entries(data.results)) {
+                        if (!result.error) {
+                            html += `
+                                <div class="metric">
+                                    <div class="metric-value">${result.recovery_accuracy}%</div>
+                                    <div class="metric-label">${result.name}<br>Recovery</div>
+                                    <div class="metric-value" style="font-size: 14px;">${result.psnr} dB</div>
+                                    <div class="metric-label">PSNR</div>
+                                </div>
+                            `;
+                        }
+                    }
+                    
+                    html += '</div><table style="width: 100%; border-collapse: collapse;">';
+                    
+                    for (const [key, result] of Object.entries(data.results)) {
+                        if (!result.error) {
+                            html += `
+                                <tr style="border-bottom: 1px solid #ddd;">
+                                    <td style="padding: 10px;"><strong>${result.name}</strong></td>
+                                    <td style="padding: 10px;">Recovery: ${result.recovery_accuracy}%</td>
+                                    <td style="padding: 10px;">PSNR: ${result.psnr} dB</td>
+                                </tr>
+                                <tr><td colspan="3" style="padding: 10px; font-size: 12px; color: #666;">Recovered: "${result.message_recovered.substring(0, 50)}..."</td></tr>
+                            `;
+                        }
+                    }
+                    
+                    html += '</table></div>';
+                    resultDiv.innerHTML = html;
+                }
+            } catch (error) {
+                resultDiv.innerHTML = `<div class="result-card"><p class="error">❌ Error: ${error.message}</p></div>`;
+            }
+        }
+        
+        function downloadImage(path) {
+            window.location.href = `/download/${path.split('/').pop()}`;
+        }
+    </script>
+</body>
+</html>
