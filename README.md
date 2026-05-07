@@ -120,9 +120,9 @@ Improves robustness under JPEG compression
   
   <br/>
   
-  ### ⚡ Developed by **Pesedie Rasheed** ⚡
+### 🚀 Crafted with Code & Precision by **Pesedie Rasheed** 🚀
   
-  ### 🔐 "Securing the invisible, one pixel at a time" 🔐
+  ### 🔐 "Quantum Computing Enthusiats || Network Administrator || Cybersecurity Analyst || Computer Scientist || IT Support Personnel || Frontend Developer" 🔐
   
   <sub>
     ═══════════════════════════════════════════════════
@@ -130,48 +130,10 @@ Improves robustness under JPEG compression
   
   <br/>
   
-  [![GitHub](https://img.shields.io/badge/GitHub-Pesedie_Rasheed-181717?style=flat-square&logo=github)](https://github.com/pesedie)
-  [![LinkedIn](https://img.shields.io/badge/LinkedIn-Pesedie_Rasheed-0077B5?style=flat-square&logo=linkedin)](https://linkedin.com/in/pesedie)
-  [![Email](https://img.shields.io/badge/Email-pesedie@example.com-D14836?style=flat-square&logo=gmail)](mailto:pesedie@example.com)
+  [![GitHub](https://img.shields.io/badge/GitHub-Pesedie_Rasheed-181717?style=flat-square&logo=github)](https://github.com/Adewuyipraise)
+  [![LinkedIn](https://img.shields.io/badge/LinkedIn-Pesedie_Rasheed-0077B5?style=flat-square&logo=linkedin)](https://linkedin.com/in/pesedierasheed)
+  [![Email](https://img.shields.io/badge/Email-pesedie@example.com-D14836?style=flat-square&logo=gmail)](mailto:rasheedpesedie@gmail.com)
   
-</div>
-
----
-
-
----
-
-## ✨ Creator Signature
-
-## ✨ Creator Signature
-██████╗ ███████╗███████╗███████╗██████╗ ██╗███████╗
-██╔══██╗██╔════╝██╔════╝██╔════╝██╔══██╗██║██╔════╝
-██████╔╝█████╗ ███████╗█████╗ ██║ ██║██║█████╗
-██╔═══╝ ██╔══╝ ╚════██║██╔══╝ ██║ ██║██║██╔══╝
-██║ ███████╗███████║███████╗██████╔╝██║██║
-╚═╝ ╚══════╝╚══════╝╚══════╝╚═════╝ ╚═╝╚═╝
-
-██████╗ █████╗ ███████╗██╗ ██╗███████╗███████╗██████╗
-██╔══██╗██╔══██╗██╔════╝██║ ██║██╔════╝██╔════╝██╔══██╗
-██████╔╝███████║███████╗███████║█████╗ █████╗ ██║ ██║
-██╔══██╗██╔══██║╚════██║██╔══██║██╔══╝ ██╔══╝ ██║ ██║
-██║ ██║██║ ██║███████║██║ ██║███████╗███████╗██████╔╝
-╚═╝ ╚═╝╚═╝ ╚═╝╚══════╝╚═╝ ╚═╝╚══════╝╚══════╝╚═════╝
-
-<div align="center">
-  
-### 🚀 Crafted with Code & Precision by **Pesedie Rasheed** 🚀
-
-[![Developer](https://img.shields.io/badge/Developer-Pesedie_Rasheed-blue?style=for-the-badge&logo=github)](https://github.com/pesedie)
-[![Project](https://img.shields.io/badge/Project-Steganography_Prototype-purple?style=for-the-badge&logo=python)](https://github.com/pesedie/steganography-prototype)
-▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓
-▓ ▓
-▓ 🎯 Pesedie Rasheed | Steganography Architect 🎯 ▓
-▓ ▓
-▓ "Embedding secrets, one DCT coefficient at a time" ▓
-▓ ▓
-▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓
-
 </div>
 
 ---
