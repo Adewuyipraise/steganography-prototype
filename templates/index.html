@@ -208,6 +208,7 @@
             <button class="tab active" onclick="showPanel('embed')">🔒 Embed Message</button>
             <button class="tab" onclick="showPanel('extract')">🔓 Extract Message</button>
             <button class="tab" onclick="showPanel('compare')">📊 Compare Methods</button>
+            <button class="tab" onclick="showPanel('classify')">🔍 Classify Image</button>
         </div>
         
         <!-- Embed Panel -->
@@ -312,6 +313,37 @@
             </div>
         </div>
     </div>
+    <!-- Classification Panel -->
+    <div id="classifyPanel" class="panel">
+        <div class="grid-2">
+            <div>
+                <h3>📊 Edge Block Classification</h3>
+                <p>Upload an image to see how it would be classified into edge and smooth blocks.</p>
+                <p style="font-size: 12px; color: #666;">
+                    🟥 Edge blocks (α = 0.08) | 🟩 Smooth blocks (α = 0.03)
+                    <br>Threshold: 30% edge pixels
+                </p>
+                
+                <div class="upload-area" onclick="document.getElementById('classifyImage').click()">
+                    <input type="file" id="classifyImage" accept="image/*" onchange="previewImage(this, 'classifyPreview')">
+                    <p>📁 Click to upload image for classification</p>
+                    <img id="classifyPreview" class="preview-image" style="display: none;">
+                </div>
+                
+                <button onclick="classifyImage()">🔍 Analyze Edge Blocks</button>
+            </div>
+            
+            <div id="classifyResult">
+                <h3>📊 Classification Results</h3>
+                <div class="result-card">
+                    <p>Results will appear here...</p>
+                </div>
+            </div>
+        </div>
+    </div>
+
+
+
     
     <script>
         function showPanel(panel) {
@@ -509,6 +541,66 @@
         function downloadImage(path) {
             window.location.href = `/download/${path.split('/').pop()}`;
         }
+
+    
+        async function classifyImage() {
+            const imageFile = document.getElementById('classifyImage').files[0];
+            
+            if (!imageFile) {
+                alert('Please upload an image');
+                return;
+            }
+            
+            const formData = new FormData();
+            formData.append('image', imageFile);
+            
+            const resultDiv = document.getElementById('classifyResult');
+            resultDiv.innerHTML = '<div class="result-card"><div class="loading"></div> Analyzing...</div>';
+            
+            try {
+                const response = await fetch('/classify', {
+                    method: 'POST',
+                    body: formData
+                });
+                const data = await response.json();
+                
+                if (data.success) {
+                    resultDiv.innerHTML = `
+                        <div class="result-card">
+                            <h4>📊 Classification Complete</h4>
+                            <img src="${data.classification_image}" style="max-width: 100%; border-radius: 8px;">
+                            <div class="metrics">
+                                <div class="metric" style="background: #fee2e2;">
+                                    <div class="metric-value" style="color: #dc2626;">${data.edge_blocks}</div>
+                                    <div class="metric-label">Edge Blocks (α = ${data.alpha_edge})</div>
+                                </div>
+                                <div class="metric" style="background: #dcfce7;">
+                                    <div class="metric-value" style="color: #16a34a;">${data.smooth_blocks}</div>
+                                    <div class="metric-label">Smooth Blocks (α = ${data.alpha_smooth})</div>
+                                </div>
+                                <div class="metric">
+                                    <div class="metric-value">${data.total_blocks}</div>
+                                    <div class="metric-label">Total Blocks</div>
+                                </div>
+                            </div>
+                            <p><strong>Edge Density:</strong> ${(data.edge_blocks / data.total_blocks * 100).toFixed(1)}%</p>
+                            <p><strong>Classification:</strong> ${data.edge_blocks > data.smooth_blocks ? '🔴 Texture-rich image' : '🟢 Smooth image'}</p>
+                            <p style="font-size: 12px; color: #666;">
+                                🟥 = Edge blocks (higher embedding strength)<br>
+                                🟩 = Smooth blocks (lower embedding strength)
+                            </p>
+                        </div>
+                    `;
+                } else {
+                    resultDiv.innerHTML = `<div class="result-card"><p class="error">❌ Error: ${data.error}</p></div>`;
+                }
+            } catch (error) {
+                resultDiv.innerHTML = `<div class="result-card"><p class="error">❌ Error: ${error.message}</p></div>`;
+            }
+        }
+
+
+        
     </script>
 </body>
 </html>
