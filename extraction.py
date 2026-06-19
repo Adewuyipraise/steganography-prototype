@@ -4,55 +4,81 @@ import numpy as np
 import cv2
 
 class DCTExtractor:
-    """Handles extraction of bits from DCT coefficients using differential encoding"""
+    """Handles extraction of bits from DCT coefficients"""
     
     def __init__(self, config):
         self.block_size = config.BLOCK_SIZE
-        self.coeff_pairs = config.COEFF_PAIRS
+        self.positions = config.MID_FREQ_POSITIONS
     
     def _rgb_to_ycbcr(self, image):
-        """Convert RGB to YCbCr color space"""
         return cv2.cvtColor(image, cv2.COLOR_RGB2YCrCb)
     
     def _apply_dct(self, block):
-        """Apply 2D DCT to an 8x8 block"""
-        return cv2.dct(np.float32(block))
+        """Apply 2D DCT using scipy"""
+        from scipy.fftpack import dct
+        return dct(dct(block.T, norm='ortho').T, norm='ortho')
+    
+    def _extract_bit_from_coefficient(self, coeff):
+        """
+        Extract a single bit from DCT coefficient.
+        Chapter 3 Algorithm 3.6: If coefficient > 0 → bit = 1, else bit = 0
+        """
+        return 1 if coeff > 0 else 0
     
     def extract(self, stego_image, num_bits):
         """
-        Extract bitstream from stego image using differential DCT.
+        Extract bitstream from stego image.
+        
+        Args:
+            stego_image: RGB image as numpy array
+            num_bits: Number of bits to extract
+            
+        Returns:
+            List of extracted bits
         """
+        # Convert to YCbCr
         ycbcr = self._rgb_to_ycbcr(stego_image)
-        luminance = ycbcr[:, :, 0].copy().astype(np.float32)
+        luminance = ycbcr[:, :, 0].copy()
         
         h, w = luminance.shape
         blocks_h = h // self.block_size
         blocks_w = w // self.block_size
         
         extracted_bits = []
+        missing_blocks = 0
         
         for br in range(blocks_h):
             for bc in range(blocks_w):
-                if len(extracted_bits) >= num_bits:
-                    break
-                
-                r_start, r_end = br * self.block_size, (br + 1) * self.block_size
-                c_start, c_end = bc * self.block_size, (bc + 1) * self.block_size
+                # Extract block
+                r_start = br * self.block_size
+                r_end = r_start + self.block_size
+                c_start = bc * self.block_size
+                c_end = c_start + self.block_size
                 block = luminance[r_start:r_end, c_start:c_end]
                 
+                # Check if block is complete (for cropping handling)
+                if block.shape != (self.block_size, self.block_size):
+                    missing_blocks += 1
+                    continue
+                
+                # Apply DCT
                 dct_block = self._apply_dct(block)
                 
-                for p1, p2 in self.coeff_pairs:
+                # Extract from mid-frequency positions (Algorithm 3.2)
+                for u, v in self.positions:
                     if len(extracted_bits) >= num_bits:
                         break
-                    
-                    u1, v1 = p1
-                    u2, v2 = p2
-                    
-                    # Extract based on which coefficient is larger
-                    if dct_block[u1, v1] > dct_block[u2, v2]:
-                        extracted_bits.append(1)
-                    else:
-                        extracted_bits.append(0)
+                    if u < self.block_size and v < self.block_size:
+                        coeff = dct_block[u, v]
+                        bit = self._extract_bit_from_coefficient(coeff)
+                        extracted_bits.append(bit)
+                
+                if len(extracted_bits) >= num_bits:
+                    break
+            if len(extracted_bits) >= num_bits:
+                break
         
-        return extracted_bits
+        if missing_blocks > 0:
+            print(f"Warning: {missing_blocks} blocks missing due to cropping")
+        
+        return extracted_bits[:num_bits]
