@@ -42,3 +42,9 @@ RANDOM_SEED = 42  # For reproducibility
 TUNING_SET_SIZE = 200
 VALIDATION_SET_SIZE = 50
 TEST_SET_SIZE = 50
+
+
+# Backward compatibility for baselines.py
+# These maintain old attribute names for code that hasn't been updated
+EDGE_STRENGTH_FACTOR = 1.0  # Not used in new code, but kept for compatibility
+EMBEDDING_STRENGTH_BASE = EMBEDDING_STRENGTH_SMOOTH  # Old name mapping
