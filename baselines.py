@@ -68,7 +68,7 @@ class DCTWithoutEC:
     def __init__(self, config): 
         self.block_size = config.BLOCK_SIZE 
         self.positions = config.MID_FREQ_POSITIONS 
-        self.base_strength = config.EMBEDDING_STRENGTH_BASE 
+        self.base_strength = config.EMBEDDING_STRENGTH_SMOOTH 
         self.edge_factor = config.EDGE_STRENGTH_FACTOR 
         self.name = "DCT without Error Correction" 
     
