@@ -9,7 +9,6 @@ import base64
 from datetime import datetime
 import json
 
-# Import your updated modules
 import config
 from embedding import DCTEmbedder
 from extraction import DCTExtractor
@@ -21,22 +20,21 @@ from evaluation import MetricsCalculator
 app = Flask(__name__)
 CORS(app)
 app.config['UPLOAD_FOLDER'] = 'uploads'
-app.config['MAX_CONTENT_LENGTH'] = 16 * 1024 * 1024  # 16MB max
+app.config['MAX_CONTENT_LENGTH'] = 16 * 1024 * 1024
 
-# Create upload folder
+# Create folders
 os.makedirs(app.config['UPLOAD_FOLDER'], exist_ok=True)
 os.makedirs('results', exist_ok=True)
 
-# Initialize components with updated config
+# Initialize components
 embedder = DCTEmbedder(config)
 extractor = DCTExtractor(config)
 lsb = LSBSteganography()
 dct_no_ec = DCTWithoutEC(config)
-tester = TransformationTester(config)
 metrics = MetricsCalculator()
 
 def text_to_bits(text):
-    """Convert text string to list of bits"""
+    """Convert text to bits - FIXED"""
     bits = []
     for char in text:
         ascii_val = ord(char)
@@ -45,14 +43,25 @@ def text_to_bits(text):
     return bits
 
 def bits_to_text(bits):
-    """Convert list of bits back to text string"""
+    """Convert bits to text - FIXED"""
+    # Remove padding zeros at end
+    while bits and bits[-1] == 0:
+        bits = bits[:-1]
+    
     if len(bits) % 8 != 0:
-        bits = bits[:-(len(bits) % 8)]
+        bits = bits + [0] * (8 - len(bits) % 8)
+    
     chars = []
     for i in range(0, len(bits), 8):
+        if i + 8 > len(bits):
+            break
         byte = bits[i:i+8]
-        ascii_val = sum(bit << (7 - j) for j, bit in enumerate(byte))
-        chars.append(chr(ascii_val))
+        ascii_val = 0
+        for j, bit in enumerate(byte):
+            ascii_val = (ascii_val << 1) | bit
+        if 32 <= ascii_val <= 126 or ascii_val in [10, 13]:
+            chars.append(chr(ascii_val))
+    
     return ''.join(chars)
 
 @app.route('/')
@@ -61,7 +70,7 @@ def index():
 
 @app.route('/embed', methods=['POST'])
 def embed_message():
-    """Handle image upload and message embedding - Updated for Chapter 3"""
+    """Handle image upload and message embedding - FIXED"""
     try:
         if 'image' not in request.files:
             return jsonify({'error': 'No image uploaded'}), 400
@@ -95,12 +104,12 @@ def embed_message():
             
             stego_image, embedding_map = embedder.embed(cover_image, encoded_bits)
             
-            # Get classification map for display
+            # Get classification map
             class_map = embedder.get_classification_map(cover_image)
             edge_blocks = int(np.sum(class_map))
             smooth_blocks = class_map.size - edge_blocks
             
-            # Verify extraction
+            # Extract to verify
             extracted_encoded = extractor.extract(stego_image, len(encoded_bits))
             decoded_bits, error_count = Hamming74.decode_bitstream(extracted_encoded, padding_info)
             recovered_text = bits_to_text(decoded_bits)
@@ -125,7 +134,7 @@ def embed_message():
         output_path = os.path.join(app.config['UPLOAD_FOLDER'], f'stego_{timestamp}.png')
         cv2.imwrite(output_path, cv2.cvtColor(stego_image, cv2.COLOR_RGB2BGR))
         
-        # Convert to base64 for display
+        # Convert to base64
         _, buffer = cv2.imencode('.png', cv2.cvtColor(stego_image, cv2.COLOR_RGB2BGR))
         img_base64 = base64.b64encode(buffer).decode('utf-8')
         
@@ -135,23 +144,15 @@ def embed_message():
         if method == 'proposed':
             extracted_bits = decoded_bits
         else:
-            extracted_bits = text_to_bits(recovered_text) if method != 'proposed' else decoded_bits
+            extracted_bits = text_to_bits(recovered_text)
         
         ber = metrics.bit_error_rate(original_bits, extracted_bits)
         recovery_acc = metrics.text_recovery_accuracy(message, recovered_text)
         psnr = metrics.psnr(cover_image, stego_image)
         ssim = metrics.ssim_index(cover_image, stego_image)
         
-        # For proposed method, also get edge classification info
-        extra_info = {}
-        if method == 'proposed':
-            class_map = embedder.get_classification_map(cover_image)
-            extra_info = {
-                'edge_blocks': int(np.sum(class_map)),
-                'smooth_blocks': class_map.size - int(np.sum(class_map)),
-                'alpha_edge': config.EMBEDDING_STRENGTH_EDGE,
-                'alpha_smooth': config.EMBEDDING_STRENGTH_SMOOTH
-            }
+        # Check if recovered text matches
+        message_matches = recovered_text == message
         
         return jsonify({
             'success': True,
@@ -163,9 +164,8 @@ def embed_message():
                 'ber': round(ber, 4),
                 'recovery_accuracy': round(recovery_acc, 1),
                 'message_recovered': recovered_text[:100] + ('...' if len(recovered_text) > 100 else ''),
-                'message_matches': recovered_text == message
+                'message_matches': message_matches
             },
-            'extra_info': extra_info,
             'output_path': output_path
         })
         
@@ -174,7 +174,7 @@ def embed_message():
 
 @app.route('/extract', methods=['POST'])
 def extract_message():
-    """Extract hidden message from stego image"""
+    """Extract hidden message - FIXED"""
     try:
         if 'image' not in request.files:
             return jsonify({'error': 'No image uploaded'}), 400
@@ -190,39 +190,130 @@ def extract_message():
         if stego_image is None:
             return jsonify({'error': 'Invalid image format'}), 400
         
+        recovered_text = ""
+        
         if method == 'proposed':
             capacity = embedder.get_capacity(stego_image.shape)
-            estimated_bits = min(capacity, message_length * 8 * 7 // 4)
+            estimated_bits = min(capacity, message_length * 8 * 7 // 4 + 10)
             extracted_encoded = extractor.extract(stego_image, estimated_bits)
             
-            # Try decoding with different paddings
-            recovered_text = ""
+            # Try different paddings
+            best_text = ""
+            best_score = 0
+            
             for padding in range(8):
-                decoded_bits, _ = Hamming74.decode_bitstream(extracted_encoded, (padding, 0))
-                recovered_text = bits_to_text(decoded_bits)
-                if len(recovered_text) > 5 and all(ord(c) < 128 for c in recovered_text):
-                    break
+                try:
+                    decoded_bits, _ = Hamming74.decode_bitstream(extracted_encoded, (padding, 0))
+                    text = bits_to_text(decoded_bits)
+                    score = sum(1 for c in text if 32 <= ord(c) <= 126)
+                    if score > best_score:
+                        best_score = score
+                        best_text = text
+                except:
+                    continue
+            
+            recovered_text = best_text
             method_name = "Proposed EDC-HC"
             
         elif method == 'dct_no_ec':
             capacity = dct_no_ec.get_capacity(stego_image.shape)
-            estimated_bits = min(capacity, message_length * 8)
+            estimated_bits = min(capacity, message_length * 8 + 10)
             extracted_bits = dct_no_ec.extract(stego_image, estimated_bits)
             recovered_text = bits_to_text(extracted_bits)
             method_name = "DCT without Error Correction"
             
-        else:  # LSB
+        else:
             capacity = stego_image.shape[0] * stego_image.shape[1] * 3
-            estimated_bits = min(capacity, message_length * 8)
+            estimated_bits = min(capacity, message_length * 8 + 10)
             extracted_bits = lsb.extract(stego_image, estimated_bits)
             recovered_text = lsb.bits_to_text(extracted_bits)
             method_name = "LSB Spatial Domain"
         
+        # Clean extracted text
+        cleaned = ''.join(c for c in recovered_text if 32 <= ord(c) <= 126 or c in '\n\r\t')
+        
         return jsonify({
             'success': True,
-            'extracted_message': recovered_text[:500],
+            'extracted_message': cleaned[:500] if cleaned else "No readable message found",
             'method': method_name,
-            'message_length': len(recovered_text)
+            'message_length': len(cleaned)
+        })
+        
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+@app.route('/classify', methods=['POST'])
+def classify_image():
+    """Show edge/smooth block classification - FIXED (no matplotlib)"""
+    try:
+        if 'image' not in request.files:
+            return jsonify({'error': 'No image uploaded'}), 400
+        
+        file = request.files['image']
+        img_bytes = file.read()
+        nparr = np.frombuffer(img_bytes, np.uint8)
+        image = cv2.imdecode(nparr, cv2.COLOR_BGR2RGB)
+        
+        if image is None:
+            return jsonify({'error': 'Invalid image format'}), 400
+        
+        # Get classification map
+        class_map = embedder.get_classification_map(image)
+        
+        # Create visualization using OpenCV (no matplotlib)
+        h, w = image.shape[:2]
+        block_h = h // 8
+        block_w = w // 8
+        
+        overlay = image.copy()
+        
+        for br in range(class_map.shape[0]):
+            for bc in range(class_map.shape[1]):
+                y1 = br * block_h
+                y2 = (br + 1) * block_h
+                x1 = bc * block_w
+                x2 = (bc + 1) * block_w
+                
+                if class_map[br, bc] == 1:  # Edge block - RED
+                    color = (0, 0, 255)
+                    alpha = 0.3
+                else:  # Smooth block - GREEN
+                    color = (0, 255, 0)
+                    alpha = 0.2
+                
+                overlay[y1:y2, x1:x2] = cv2.addWeighted(
+                    overlay[y1:y2, x1:x2], 1 - alpha,
+                    np.full((block_h, block_w, 3), color, dtype=np.uint8), alpha, 0
+                )
+        
+        # Add borders
+        for br in range(class_map.shape[0]):
+            for bc in range(class_map.shape[1]):
+                y1 = br * block_h
+                y2 = (br + 1) * block_h
+                x1 = bc * block_w
+                x2 = (bc + 1) * block_w
+                
+                if class_map[br, bc] == 1:
+                    cv2.rectangle(overlay, (x1, y1), (x2, y2), (0, 0, 255), 1)
+                else:
+                    cv2.rectangle(overlay, (x1, y1), (x2, y2), (0, 255, 0), 1)
+        
+        # Convert to base64
+        _, buffer = cv2.imencode('.png', cv2.cvtColor(overlay, cv2.COLOR_RGB2BGR))
+        img_base64 = base64.b64encode(buffer).decode('utf-8')
+        
+        edge_count = int(np.sum(class_map))
+        smooth_count = class_map.size - edge_count
+        
+        return jsonify({
+            'success': True,
+            'classification_image': f'data:image/png;base64,{img_base64}',
+            'edge_blocks': edge_count,
+            'smooth_blocks': smooth_count,
+            'total_blocks': class_map.size,
+            'alpha_edge': config.EMBEDDING_STRENGTH_EDGE,
+            'alpha_smooth': config.EMBEDDING_STRENGTH_SMOOTH
         })
         
     except Exception as e:
@@ -230,7 +321,7 @@ def extract_message():
 
 @app.route('/compare', methods=['POST'])
 def compare_methods():
-    """Compare all three methods on same image and message"""
+    """Compare all three methods"""
     try:
         if 'image' not in request.files:
             return jsonify({'error': 'No image uploaded'}), 400
@@ -243,8 +334,6 @@ def compare_methods():
         cover_image = cv2.imdecode(nparr, cv2.COLOR_BGR2RGB)
         
         results = {}
-        
-        # Test all three methods
         methods = {
             'proposed': ('Proposed EDC-HC', embedder, extractor, True),
             'dct_no_ec': ('DCT without EC', dct_no_ec, dct_no_ec, False),
@@ -262,8 +351,6 @@ def compare_methods():
                         extracted_encoded = extract.extract(stego, len(encoded_bits))
                         decoded_bits, _ = Hamming74.decode_bitstream(extracted_encoded, padding_info)
                         recovered = bits_to_text(decoded_bits)
-                        
-                        # Get edge classification info
                         class_map = embed.get_classification_map(cover_image)
                         extra = f"Edge: {int(np.sum(class_map))}, Smooth: {class_map.size - int(np.sum(class_map))}"
                     else:
@@ -306,7 +393,7 @@ def compare_methods():
 
 @app.route('/download/<filename>')
 def download_file(filename):
-    """Download generated stego images"""
+    """Download stego image"""
     if '..' in filename or filename.startswith('/'):
         return jsonify({'error': 'Invalid filename'}), 404
     
@@ -316,85 +403,9 @@ def download_file(filename):
     
     return send_from_directory(app.config['UPLOAD_FOLDER'], filename, as_attachment=True)
 
-@app.route('/classify', methods=['POST'])
-def classify_image():
-    """Show edge/smooth block classification for an image"""
-    try:
-        if 'image' not in request.files:
-            return jsonify({'error': 'No image uploaded'}), 400
-        
-        file = request.files['image']
-        img_bytes = file.read()
-        nparr = np.frombuffer(img_bytes, np.uint8)
-        image = cv2.imdecode(nparr, cv2.COLOR_BGR2RGB)
-        
-        if image is None:
-            return jsonify({'error': 'Invalid image format'}), 400
-        
-        # Get classification map
-        class_map = embedder.get_classification_map(image)
-        
-        # Create visualization
-        import matplotlib.pyplot as plt
-        from io import BytesIO
-        
-        fig, axes = plt.subplots(1, 2, figsize=(12, 5))
-        
-        # Original image
-        axes[0].imshow(image)
-        axes[0].set_title('Original Image')
-        axes[0].axis('off')
-        
-        # Classification map overlay
-        axes[1].imshow(image)
-        # Overlay classification map (edge blocks in red, smooth in green)
-        h, w = image.shape[:2]
-        block_h = h // 8
-        block_w = w // 8
-        
-        for br in range(class_map.shape[0]):
-            for bc in range(class_map.shape[1]):
-                if class_map[br, bc] == 1:  # Edge block
-                    color = [255, 0, 0]  # Red
-                else:  # Smooth block
-                    color = [0, 255, 0]  # Green
-                
-                # Draw rectangle on block
-                y1 = br * block_h
-                y2 = (br + 1) * block_h
-                x1 = bc * block_w
-                x2 = (bc + 1) * block_w
-                axes[1].add_patch(plt.Rectangle((x1, y1), block_w, block_h, 
-                                                fill=False, edgecolor=color, linewidth=1, alpha=0.5))
-        
-        axes[1].set_title(f'Edge Classification: {int(np.sum(class_map))} edge blocks, {class_map.size - int(np.sum(class_map))} smooth blocks')
-        axes[1].axis('off')
-        
-        # Save to buffer
-        buf = BytesIO()
-        plt.tight_layout()
-        plt.savefig(buf, format='png', dpi=150)
-        buf.seek(0)
-        img_base64 = base64.b64encode(buf.getvalue()).decode('utf-8')
-        plt.close()
-        
-        return jsonify({
-            'success': True,
-            'classification_image': f'data:image/png;base64,{img_base64}',
-            'edge_blocks': int(np.sum(class_map)),
-            'smooth_blocks': class_map.size - int(np.sum(class_map)),
-            'total_blocks': class_map.size,
-            'alpha_edge': config.EMBEDDING_STRENGTH_EDGE,
-            'alpha_smooth': config.EMBEDDING_STRENGTH_SMOOTH
-        })
-        
-    except Exception as e:
-        return jsonify({'error': str(e)}), 500
-
 if __name__ == '__main__':
     print("\n" + "="*50)
     print("🌐 Steganography Web Interface - EDC-HC")
-    print("Edge-guided DCT with Hamming Code (Chapter 3)")
     print("="*50)
     print(f"α_edge = {config.EMBEDDING_STRENGTH_EDGE}")
     print(f"α_smooth = {config.EMBEDDING_STRENGTH_SMOOTH}")
