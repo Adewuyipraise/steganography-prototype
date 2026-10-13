@@ -312,38 +312,36 @@
                 </div>
             </div>
         </div>
-    </div>
-    <!-- Classification Panel -->
-    <div id="classifyPanel" class="panel">
-        <div class="grid-2">
-            <div>
-                <h3>📊 Edge Block Classification</h3>
-                <p>Upload an image to see how it would be classified into edge and smooth blocks.</p>
-                <p style="font-size: 12px; color: #666;">
-                    🟥 Edge blocks (α = 0.08) | 🟩 Smooth blocks (α = 0.03)
-                    <br>Threshold: 30% edge pixels
-                </p>
-                
-                <div class="upload-area" onclick="document.getElementById('classifyImage').click()">
-                    <input type="file" id="classifyImage" accept="image/*" onchange="previewImage(this, 'classifyPreview')">
-                    <p>📁 Click to upload image for classification</p>
-                    <img id="classifyPreview" class="preview-image" style="display: none;">
+        
+        <!-- Classification Panel -->
+        <div id="classifyPanel" class="panel">
+            <div class="grid-2">
+                <div>
+                    <h3>📊 Edge Block Classification</h3>
+                    <p>Upload an image to see how it would be classified into edge and smooth blocks.</p>
+                    <p style="font-size: 12px; color: #666;">
+                        🟥 Edge blocks (α = 0.08) | 🟩 Smooth blocks (α = 0.03)
+                        <br>Threshold: 30% edge pixels
+                    </p>
+                    
+                    <div class="upload-area" onclick="document.getElementById('classifyImage').click()">
+                        <input type="file" id="classifyImage" accept="image/*" onchange="previewImage(this, 'classifyPreview')">
+                        <p>📁 Click to upload image for classification</p>
+                        <img id="classifyPreview" class="preview-image" style="display: none;">
+                    </div>
+                    
+                    <button onclick="classifyImage()">🔍 Analyze Edge Blocks</button>
                 </div>
                 
-                <button onclick="classifyImage()">🔍 Analyze Edge Blocks</button>
-            </div>
-            
-            <div id="classifyResult">
-                <h3>📊 Classification Results</h3>
-                <div class="result-card">
-                    <p>Results will appear here...</p>
+                <div id="classifyResult">
+                    <h3>📊 Classification Results</h3>
+                    <div class="result-card">
+                        <p>Results will appear here...</p>
+                    </div>
                 </div>
             </div>
         </div>
     </div>
-
-
-
     
     <script>
         function showPanel(panel) {

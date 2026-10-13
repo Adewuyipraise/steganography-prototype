@@ -2,6 +2,9 @@
 
 import numpy as np
 import cv2
+from scipy.fftpack import dct, idct
+
+from text_utils import text_to_bits, bits_to_text
 
 class LSBSteganography:
     """
@@ -15,24 +18,11 @@ class LSBSteganography:
     
     def text_to_bits(self, text):
         """Convert text to binary bits"""
-        bits = []
-        for char in text:
-            ascii_val = ord(char)
-            for i in range(7, -1, -1):
-                bits.append((ascii_val >> i) & 1)
-        return bits
+        return text_to_bits(text)
     
     def bits_to_text(self, bits):
         """Convert bits back to text"""
-        if len(bits) % 8 != 0:
-            bits = bits[:-(len(bits) % 8)]
-        
-        chars = []
-        for i in range(0, len(bits), 8):
-            byte = bits[i:i+8]
-            ascii_val = sum(bit << (7 - j) for j, bit in enumerate(byte))
-            chars.append(chr(ascii_val))
-        return ''.join(chars)
+        return bits_to_text(bits)
     
     def embed(self, cover_image, secret_text):
         """
@@ -80,14 +70,13 @@ class DCTWithoutEC:
     DCT-based steganography WITHOUT Hamming error correction.
     Chapter 3 Section 3.7.3
     Same as proposed method but no error correction coding.
-    Uses uniform embedding strength (α = 0.05) as specified in Chapter 3.
+    Uses uniform quantization-based embedding.
     """
     
     def __init__(self, config):
         self.block_size = config.BLOCK_SIZE
         self.positions = config.MID_FREQ_POSITIONS
-        # Chapter 3 Section 3.7.3: uniform embedding strength α = 0.05
-        self.embedding_strength = 0.05
+        self.embedding_strength = 0.3
         self.name = "DCT without Error Correction"
     
     def _rgb_to_ycbcr(self, image):
@@ -97,43 +86,36 @@ class DCTWithoutEC:
         return cv2.cvtColor(image, cv2.COLOR_YCrCb2RGB)
     
     def _apply_dct(self, block):
-        from scipy.fftpack import dct
         return dct(dct(block.T, norm='ortho').T, norm='ortho')
     
     def _apply_idct(self, block):
-        from scipy.fftpack import idct
         return idct(idct(block.T, norm='ortho').T, norm='ortho')
     
     def _embed_bit_in_coefficient(self, coeff, bit, alpha):
-        """Embed bit by modifying coefficient"""
-        if bit == 1:
-            return coeff + alpha
-        else:
-            return coeff - alpha
+        step = alpha * 10
+        quantized = np.round(coeff / step) * step
+        current_parity = int(np.abs(np.round(quantized / step))) % 2
+        
+        if current_parity != bit:
+            if quantized >= 0:
+                quantized += step if bit == 1 else -step
+            else:
+                quantized -= step if bit == 1 else -step
+        
+        return quantized
+    
+    def _extract_bit_from_coefficient(self, coeff, alpha):
+        step = alpha * 10
+        quantized_idx = np.round(coeff / step)
+        return int(np.abs(quantized_idx)) % 2
     
     def text_to_bits(self, text):
-        bits = []
-        for char in text:
-            ascii_val = ord(char)
-            for i in range(7, -1, -1):
-                bits.append((ascii_val >> i) & 1)
-        return bits
+        return text_to_bits(text)
     
     def bits_to_text(self, bits):
-        if len(bits) % 8 != 0:
-            bits = bits[:-(len(bits) % 8)]
-        chars = []
-        for i in range(0, len(bits), 8):
-            byte = bits[i:i+8]
-            ascii_val = sum(bit << (7 - j) for j, bit in enumerate(byte))
-            chars.append(chr(ascii_val))
-        return ''.join(chars)
+        return bits_to_text(bits)
     
     def embed(self, cover_image, secret_text):
-        """
-        Embed without error correction using uniform strength.
-        Chapter 3 Section 3.7.3
-        """
         original_bits = self.text_to_bits(secret_text)
         
         ycbcr = self._rgb_to_ycbcr(cover_image)
@@ -160,7 +142,6 @@ class DCTWithoutEC:
                 
                 dct_block = self._apply_dct(block)
                 
-                # Use uniform embedding strength (α = 0.05)
                 for u, v in self.positions:
                     if bit_idx >= len(original_bits):
                         break
@@ -186,7 +167,6 @@ class DCTWithoutEC:
         return stego_image.astype(np.uint8), len(original_bits)
     
     def extract(self, stego_image, num_bits):
-        """Extract bits (no error correction decoding)"""
         ycbcr = self._rgb_to_ycbcr(stego_image)
         luminance = ycbcr[:, :, 0].copy()
         
@@ -211,7 +191,7 @@ class DCTWithoutEC:
                         break
                     if u < self.block_size and v < self.block_size:
                         coeff = dct_block[u, v]
-                        bit = 1 if coeff > 0 else 0
+                        bit = self._extract_bit_from_coefficient(coeff, self.embedding_strength)
                         extracted_bits.append(bit)
                 
                 if len(extracted_bits) >= num_bits:

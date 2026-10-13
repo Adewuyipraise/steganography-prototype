@@ -8,6 +8,10 @@ stego_*.png
 venv/
 .DS_Store
 *.log
+
+# Third-party test datasets (large, downloaded locally)
+dataset/bossbase/
+dataset/usc_sipi/
 venv/
 env/
 VENV/

@@ -44,7 +44,7 @@ class Steganalysis:
             'chi2_statistic': float(chi2_stat),
             'p_value': float(p_value),
             'is_detectable': is_detectable,
-            'security_score': 1.0 - float(p_value) if p_value < 0.05 else 1.0
+            'security_score': 1.0 - min(float(p_value), 1.0)
         }
     
     @staticmethod

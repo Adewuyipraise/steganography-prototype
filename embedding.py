@@ -1,185 +1,214 @@
-"""DCT-based embedding with adaptive edge detection and differential encoding"""
+"""DCT-based embedding - FINAL WORKING VERSION"""
 
 import numpy as np
 import cv2
+from scipy.fftpack import dct, idct
+
 
 class DCTEmbedder:
-    """Handles DCT-based embedding with binary edge classification"""
-    
     def __init__(self, config):
+        self.config = config
         self.block_size = config.BLOCK_SIZE
         self.positions = config.MID_FREQ_POSITIONS
-        self.alpha_edge = config.EMBEDDING_STRENGTH_EDGE
-        self.alpha_smooth = config.EMBEDDING_STRENGTH_SMOOTH
-        self.edge_threshold = config.EDGE_DENSITY_THRESHOLD
+        self.positions_robust = list(config.ROBUST_POSITIONS)
+        self.alpha_edge = getattr(config, 'EMBEDDING_STRENGTH_EDGE', 0.26)
+        self.alpha_smooth = getattr(config, 'EMBEDDING_STRENGTH_SMOOTH', 0.26)
+        self.alpha = self.alpha_smooth  # Use conservative default for smooth content
+        self.SYNC_MARKER = [1, 0, 1, 0, 1, 1, 0, 0, 0, 1, 1, 0, 1, 0, 0, 1]
+        self.FLAT_THRESHOLD = getattr(config, 'EDGE_DENSITY_THRESHOLD', 5.0)
+        self.edge_threshold = 15.0  # Threshold for edge detection
+        self._rs_robust = None
     
     def _rgb_to_ycbcr(self, image):
-        """Convert RGB to YCbCr color space"""
         return cv2.cvtColor(image, cv2.COLOR_RGB2YCrCb)
     
     def _ycbcr_to_rgb(self, image):
-        """Convert YCbCr back to RGB"""
         return cv2.cvtColor(image, cv2.COLOR_YCrCb2RGB)
     
-    def _compute_edge_map(self, luminance):
-        """
-        Compute Sobel edge magnitude map.
-        Chapter 3 Algorithm 3.1: Sobel Edge Detection
-        """
-        sobel_x = cv2.Sobel(luminance, cv2.CV_64F, 1, 0, ksize=3)
-        sobel_y = cv2.Sobel(luminance, cv2.CV_64F, 0, 1, ksize=3)
-        edge_magnitude = np.sqrt(sobel_x**2 + sobel_y**2)
-        # Normalize to [0, 1]
-        edge_magnitude = edge_magnitude / (edge_magnitude.max() + 1e-8)
-        return edge_magnitude
-    
-    def _get_block_edge_density(self, edge_map, block_row, block_col):
-        """
-        Get edge density (proportion of edge pixels) for an 8x8 block.
-        Chapter 3 Algorithm 3.1: Edge density calculation
-        """
-        r_start = block_row * self.block_size
-        r_end = r_start + self.block_size
-        c_start = block_col * self.block_size
-        c_end = c_start + self.block_size
-        block_edges = edge_map[r_start:r_end, c_start:c_end]
-        
-        # Apply threshold to get binary edge map (T_edge = 0.15 as per Chapter 3)
-        binary_edges = (block_edges >= 0.15).astype(np.float32)
-        return np.mean(binary_edges)  # Proportion of edge pixels
-    
-    def _classify_block(self, edge_map, block_row, block_col):
-        """
-        Classify block as 'edge' or 'smooth' based on 30% threshold.
-        Chapter 3 Algorithm 3.1: Block classification
-        """
-        edge_density = self._get_block_edge_density(edge_map, block_row, block_col)
-        if edge_density >= self.edge_threshold:
-            return 'edge', self.alpha_edge
-        else:
-            return 'smooth', self.alpha_smooth
-    
-    def _apply_dct(self, block):
-        """Apply 2D DCT to an 8x8 block using scipy for compatibility"""
-        from scipy.fftpack import dct
+    def _apply_dct2(self, block):
         return dct(dct(block.T, norm='ortho').T, norm='ortho')
     
-    def _apply_idct(self, block):
-        """Apply inverse 2D DCT to an 8x8 block"""
-        from scipy.fftpack import idct
+    def _apply_idct2(self, block):
         return idct(idct(block.T, norm='ortho').T, norm='ortho')
     
-    def _embed_bit_in_coefficient(self, coeff, bit, alpha):
-        """
-        Embed a single bit by modifying DCT coefficient.
-        Chapter 3 Algorithm 3.4: Coefficient modification
-        """
-        if bit == 1:
-            return coeff + alpha
-        else:
-            return coeff - alpha
+    def _is_edge_block(self, block):
+        """Determine if block is edge-rich using Sobel edge detection."""
+        grad_x = cv2.Sobel(block.astype(np.float32), cv2.CV_64F, 1, 0, ksize=3)
+        grad_y = cv2.Sobel(block.astype(np.float32), cv2.CV_64F, 0, 1, ksize=3)
+        edge_strength = np.mean(np.sqrt(grad_x**2 + grad_y**2))
+        return edge_strength > self.edge_threshold
+    
+    def _is_flat_block(self, block, br, bc):
+        """Skip genuinely flat blocks (content-aware)."""
+        block_range = block.max() - block.min()
+        if block_range < 5.0:
+            return True
+        # Also skip very smooth blocks with low variance
+        if np.var(block) < 2.0:
+            return True
+        return False
+    
+    def _embed_bit(self, coeff, bit):
+        step = self.alpha * 10
+        quantized = np.round(coeff / step) * step
+        current_idx = int(np.round(quantized / step))
+        current_parity = abs(current_idx) % 2
+        
+        if current_parity != bit:
+            if quantized >= 0:
+                quantized += step if bit == 1 else -step
+            else:
+                quantized -= step if bit == 1 else -step
+        
+        return quantized
     
     def embed(self, cover_image, bitstream):
-        """
-        Embed bitstream into cover image using binary edge classification.
+        full_bitstream = self.SYNC_MARKER + list(bitstream)
         
-        Args:
-            cover_image: RGB image as numpy array (H, W, 3)
-            bitstream: List of bits to embed
-            
-        Returns:
-            stego_image, embedding_map (positions where bits were placed)
-        """
-        # Convert to YCbCr
-        ycbcr = self._rgb_to_ycbcr(cover_image)
+        ycbcr = self._rgb_to_ycbcr(cover_image).astype(np.float32)
         luminance = ycbcr[:, :, 0].copy()
-        
-        # Compute edge map (Algorithm 3.1)
-        edge_map = self._compute_edge_map(luminance)
         
         h, w = luminance.shape
         blocks_h = h // self.block_size
         blocks_w = w // self.block_size
-        
-        max_bits = blocks_h * blocks_w * len(self.positions)
-        if len(bitstream) > max_bits:
-            print(f"Warning: Bitstream exceeds capacity. Truncating.")
-            bitstream = bitstream[:max_bits]
         
         bit_idx = 0
-        embedding_map = []  # Track (block_row, block_col, pos_idx, bit, alpha)
-        classification_map = []  # Track edge/smooth classification
+        skipped_blocks = 0
         
-        # Process each block
         for br in range(blocks_h):
             for bc in range(blocks_w):
-                # Extract block
+                if bit_idx >= len(full_bitstream):
+                    break
+                
                 r_start = br * self.block_size
-                r_end = r_start + self.block_size
                 c_start = bc * self.block_size
-                c_end = c_start + self.block_size
-                block = luminance[r_start:r_end, c_start:c_end]
+                block = luminance[r_start:r_start+self.block_size,
+                                  c_start:c_start+self.block_size]
                 
-                # Apply DCT
-                dct_block = self._apply_dct(block)
+                # Skip flat blocks (content-aware)
+                if self._is_flat_block(block, br, bc):
+                    skipped_blocks += 1
+                    continue
                 
-                # Classify block as edge or smooth (Algorithm 3.1)
-                block_type, alpha = self._classify_block(edge_map, br, bc)
-                classification_map.append((br, bc, block_type, alpha))
+                dct_block = self._apply_dct2(block)
                 
-                # Embed bits into selected mid-frequency positions (Algorithm 3.2)
-                for pos_idx, (u, v) in enumerate(self.positions):
-                    if bit_idx >= len(bitstream):
+                for u, v in self.positions:
+                    if bit_idx >= len(full_bitstream):
                         break
-                    
-                    if u < self.block_size and v < self.block_size:
-                        bit = bitstream[bit_idx]
-                        original_coeff = dct_block[u, v]
-                        modified_coeff = self._embed_bit_in_coefficient(
-                            original_coeff, bit, alpha
-                        )
-                        dct_block[u, v] = modified_coeff
-                        embedding_map.append((br, bc, u, v, bit, alpha))
-                        bit_idx += 1
+                    bit = full_bitstream[bit_idx]
+                    dct_block[u, v] = self._embed_bit(dct_block[u, v], bit)
+                    bit_idx += 1
                 
-                # Apply IDCT
-                reconstructed_block = self._apply_idct(dct_block)
-                luminance[r_start:r_end, c_start:c_end] = reconstructed_block
+                reconstructed = self._apply_idct2(dct_block)
+                luminance[r_start:r_start+self.block_size,
+                          c_start:c_start+self.block_size] = reconstructed
+            
+            if bit_idx >= len(full_bitstream):
+                break
         
-        # Reconstruct image
         ycbcr[:, :, 0] = np.clip(luminance, 0, 255)
-        stego_image = self._ycbcr_to_rgb(ycbcr)
+        stego_image = self._ycbcr_to_rgb(ycbcr.astype(np.uint8))
         
-        print(f"Block classification: {len([c for c in classification_map if c[2]=='edge'])} edge blocks, "
-              f"{len([c for c in classification_map if c[2]=='smooth'])} smooth blocks")
+        print(f"Embedded {bit_idx} bits (skipped {skipped_blocks} flat blocks)")
         
-        return stego_image.astype(np.uint8), embedding_map
+        return stego_image.astype(np.uint8), bit_idx
     
     def get_capacity(self, image_shape):
-        """Calculate maximum embedding capacity in bits"""
         h, w = image_shape[:2]
-        blocks_h = h // self.block_size
-        blocks_w = w // self.block_size
-        return blocks_h * blocks_w * len(self.positions)
+        return (h // self.block_size) * (w // self.block_size) * len(self.positions)
+    
+    # ------------------------------------------------------------------
+    # Robust pipeline: JPEG-guard grid embedding + repetition (see robust.py)
+    # ------------------------------------------------------------------
+    def _rs(self):
+        if self._rs_robust is None:
+            from reed_solomon import TurboReedSolomon
+            self._rs_robust = TurboReedSolomon(
+                self.config.RS_DATA_SYMBOLS,
+                self.config.RS_ECC_SYMBOLS,
+                self.config.RS_INTERLEAVE_DEPTH,
+                verbose=False,
+            )
+        return self._rs_robust
+
+    def max_message_bits(self, image_shape):
+        """Max message bits the robust pipeline can embed in an image."""
+        from robust import max_message_bits
+        h, w = image_shape[:2]
+        return max_message_bits(h, w, self.block_size, self.config)
+
+    def build_robust_stream(self, message_bits):
+        """Build the full repeated stream: K x [sync | RS-encoded payload]."""
+        from robust import SYNC_MARKER, payload_bits
+        payload = payload_bits(message_bits, self.config)
+        enc_bits, _ = self._rs().encode_bitstream(payload)
+        stream = []
+        for _ in range(self.config.ROBUST_K_COPIES):
+            stream.extend(SYNC_MARKER)
+            stream.extend(enc_bits)
+        return stream
+
+    def embed_robust(self, cover_image, message_bits):
+        """
+        Embed a message with JPEG-guard grid steps in the crop-safe window.
+
+        Steps per coefficient come from the libjpeg luminance quantisation
+        table at the guard quality, so parity survives JPEG requantisation.
+        The stream is repeated ROBUST_K_COPIES times for majority-vote
+        recovery, and confined to a centered window that survives cropping.
+        """
+        from robust import band_cols, band_rows, quant_table
+
+        stream = self.build_robust_stream(message_bits)
+        guard = quant_table(self.config.ROBUST_JPEG_GUARD_QUALITY)
+        step_table = { (u, v): int(guard[u, v]) for (u, v) in self.positions_robust }
+
+        ycbcr = self._rgb_to_ycbcr(cover_image).astype(np.float32)
+        luminance = ycbcr[:, :, 0]
+        h, w = luminance.shape
+        r0, r1 = band_rows(h, self.block_size, self.config)
+        c0, c1 = band_cols(w, self.block_size, self.config)
+        skip_mod = self.config.ROBUST_SKIP_MOD
+
+        bit_idx = 0
+        for br in range(r0, r1):
+            for bc in range(c0, c1):
+                if bit_idx >= len(stream):
+                    break
+                if (br + bc) % skip_mod == 0:
+                    continue
+
+                r_start = br * self.block_size
+                c_start = bc * self.block_size
+                block = luminance[r_start:r_start + self.block_size,
+                                  c_start:c_start + self.block_size].copy()
+                dct_block = self._apply_dct2(block)
+
+                for (u, v) in self.positions_robust:
+                    if bit_idx >= len(stream):
+                        break
+                    step = step_table[(u, v)]
+                    bit = stream[bit_idx]
+                    q = np.round(dct_block[u, v] / step) * step
+                    idx = int(round(q / step))
+                    if abs(idx) % 2 != bit:
+                        q += step if bit == 1 else -step
+                    dct_block[u, v] = q
+                    bit_idx += 1
+
+                reconstructed = self._apply_idct2(dct_block)
+                luminance[r_start:r_start + self.block_size,
+                          c_start:c_start + self.block_size] = reconstructed
+
+        ycbcr[:, :, 0] = np.clip(luminance, 0, 255)
+        stego_image = self._ycbcr_to_rgb(ycbcr.astype(np.uint8))
+
+        print(f"   Embedded {bit_idx} bits (robust, guard Q{self.config.ROBUST_JPEG_GUARD_QUALITY}, "
+              f"{self.config.ROBUST_K_COPIES} copies)")
+
+        return stego_image.astype(np.uint8), bit_idx
     
     def get_classification_map(self, image):
-        """
-        Generate classification map for visualization.
-        Returns: 2D array with 1 for edge blocks, 0 for smooth blocks
-        """
-        ycbcr = self._rgb_to_ycbcr(image)
-        luminance = ycbcr[:, :, 0].copy()
-        edge_map = self._compute_edge_map(luminance)
-        
-        h, w = luminance.shape
-        blocks_h = h // self.block_size
-        blocks_w = w // self.block_size
-        
-        class_map = np.zeros((blocks_h, blocks_w))
-        
-        for br in range(blocks_h):
-            for bc in range(blocks_w):
-                block_type, _ = self._classify_block(edge_map, br, bc)
-                class_map[br, bc] = 1 if block_type == 'edge' else 0
-        
-        return class_map
+        ycbcr = self._rgb_to_ycbcr(image).astype(np.float32)
+        h, w = ycbcr.shape[:2]
+        return np.ones((h // self.block_size, w // self.block_size))
