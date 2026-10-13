@@ -1,4 +1,4 @@
-"""Web Interface for Steganography Prototype - EDC-HC"""
+"""Web Interface for Steganography Prototype - EDC-HC (Reed-Solomon)"""
 
 from flask import Flask, render_template, request, jsonify, send_from_directory
 from flask_cors import CORS
@@ -13,10 +13,10 @@ import sys
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 import config
-from text_utils import text_to_bits, bits_to_text, verify_text_encoding
+from text_utils import text_to_bits, bits_to_text
 from embedding import DCTEmbedder
 from extraction import DCTExtractor
-from error_correction import Hamming74
+from reed_solomon import TurboReedSolomon
 from baselines import LSBSteganography, DCTWithoutEC
 from evaluation import MetricsCalculator
 from robustness_tests import TransformationTester
@@ -24,9 +24,8 @@ from robustness_tests import TransformationTester
 app = Flask(__name__)
 CORS(app)
 app.config['UPLOAD_FOLDER'] = 'uploads'
-app.config['MAX_CONTENT_LENGTH'] = 16 * 1024 * 1024  # 16MB
+app.config['MAX_CONTENT_LENGTH'] = 16 * 1024 * 1024
 
-# Create necessary folders
 os.makedirs(app.config['UPLOAD_FOLDER'], exist_ok=True)
 os.makedirs('results', exist_ok=True)
 
@@ -38,21 +37,72 @@ dct_no_ec = DCTWithoutEC(config)
 metrics = MetricsCalculator()
 tester = TransformationTester(config)
 
+# Reed-Solomon settings (match main.py)
+RS_DATA_SYMBOLS = 63
+RS_ECC_SYMBOLS = 192
+RS_INTERLEAVE_DEPTH = 4
+RS_COPIES = 4
+
+
+def encode_with_rs(text):
+    """Encode text using Reed-Solomon with repetition."""
+    bits = text_to_bits(text)
+    rs = TurboReedSolomon(
+        data_symbols=RS_DATA_SYMBOLS,
+        ecc_symbols=RS_ECC_SYMBOLS,
+        interleave_depth=RS_INTERLEAVE_DEPTH
+    )
+    encoded_bits, padding_info = rs.encode_bitstream(bits)
+    # Add repetition
+    repeated = encoded_bits * RS_COPIES
+    return repeated, padding_info
+
+
+def decode_with_rs(extracted_bits, padding_info, single_copy_length):
+    """Decode using Reed-Solomon, trying each of the 4 copies."""
+    rs = TurboReedSolomon(
+        data_symbols=RS_DATA_SYMBOLS,
+        ecc_symbols=RS_ECC_SYMBOLS,
+        interleave_depth=RS_INTERLEAVE_DEPTH
+    )
+    
+    best_text = ""
+    best_score = 0
+    
+    for copy_idx in range(RS_COPIES):
+        start = copy_idx * single_copy_length
+        end = start + single_copy_length
+        if end > len(extracted_bits):
+            continue
+        
+        single_copy = extracted_bits[start:end]
+        
+        try:
+            decoded_bits, _ = rs.decode_bitstream(single_copy, padding_info)
+            text = bits_to_text(decoded_bits)
+            
+            # Score by printable character ratio
+            if text:
+                printable = sum(1 for c in text if 32 <= ord(c) <= 126)
+                score = printable / max(len(text), 1) * len(text)
+                if score > best_score:
+                    best_score = score
+                    best_text = text
+        except Exception:
+            continue
+    
+    return best_text
+
 
 @app.route('/')
 def index():
-    """Render the main page"""
     return render_template('index.html')
 
 
 @app.route('/embed', methods=['POST'])
 def embed_message():
-    """
-    Handle image upload and message embedding.
-    Uses the updated text_utils for proper encoding/decoding.
-    """
+    """Handle image upload and message embedding with Reed-Solomon."""
     try:
-        # Validate request
         if 'image' not in request.files:
             return jsonify({'error': 'No image uploaded'}), 400
 
@@ -66,7 +116,6 @@ def embed_message():
         if not message:
             return jsonify({'error': 'No message to hide'}), 400
 
-        # Read and validate image
         img_bytes = file.read()
         nparr = np.frombuffer(img_bytes, np.uint8)
         cover_image = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
@@ -77,55 +126,49 @@ def embed_message():
         cover_image = cv2.cvtColor(cover_image, cv2.COLOR_BGR2RGB)
         h, w = cover_image.shape[:2]
 
-        if h < 32 or w < 32:
-            return jsonify({'error': f'Image too small ({h}x{w}). Minimum 32x32 pixels required'}), 400
+        if h < 64 or w < 64:
+            return jsonify({'error': f'Image too small ({h}x{w}). Minimum 64x64 pixels required'}), 400
 
         print(f"\n📝 Embedding: '{message[:50]}...' ({len(message)} chars)")
         print(f"📸 Image: {w}x{h}")
 
-        # Embed based on selected method
+        # =========================================================
+        # PROPOSED: DCT + Reed-Solomon + Repetition
+        # =========================================================
         if method == 'proposed':
-            # Convert message to bits
-            original_bits = text_to_bits(message)
-            print(f"📊 Original bits: {len(original_bits)}")
+            # Encode with RS + repetition
+            encoded_bits, padding_info = encode_with_rs(message)
+            single_copy_length = len(encoded_bits) // RS_COPIES
+            print(f"📊 Encoded bits: {len(encoded_bits)} ({single_copy_length} × {RS_COPIES} copies)")
 
-            # Encode with Hamming
-            encoded_bits, padding_info = Hamming74.encode_bitstream(original_bits)
-            print(f"🔐 Encoded bits: {len(encoded_bits)}")
-
-            # Check capacity
             capacity = embedder.get_capacity(cover_image.shape)
             if len(encoded_bits) > capacity:
                 return jsonify({
-                    'error': f'Message too long. Max {capacity//8} characters, got {len(message)}'
+                    'error': f'Message too long. Try a shorter message.'
                 }), 400
 
             # Embed
-            stego_image, embedding_map = embedder.embed(cover_image, encoded_bits)
+            stego_image, _ = embedder.embed(cover_image, encoded_bits)
 
-            # Get classification map for display
-            class_map = embedder.get_classification_map(cover_image)
-            edge_blocks = int(np.sum(class_map))
-            smooth_blocks = class_map.size - edge_blocks
+            # Verify by extracting
+            extracted = extractor.extract(stego_image, len(encoded_bits))
+            recovered_text = decode_with_rs(extracted, padding_info, single_copy_length)
 
-            # Verify extraction
-            extracted_encoded = extractor.extract(stego_image, len(encoded_bits))
-            decoded_bits, error_count = Hamming74.decode_bitstream(extracted_encoded, padding_info)
+            method_name = "Proposed EDC-HC (DCT + Reed-Solomon)"
 
-            # Recover text
-            recovered_text = bits_to_text(decoded_bits)
-            print(f"📝 Recovered: '{recovered_text[:50]}...'")
-            print(f"✅ Hamming errors corrected: {error_count}")
-
-            method_name = f"Proposed EDC-HC (Edge: {edge_blocks}, Smooth: {smooth_blocks})"
-
+        # =========================================================
+        # DCT WITHOUT ERROR CORRECTION
+        # =========================================================
         elif method == 'dct_no_ec':
             stego_image, num_bits = dct_no_ec.embed(cover_image, message)
             extracted_bits = dct_no_ec.extract(stego_image, num_bits)
             recovered_text = bits_to_text(extracted_bits)
             method_name = "DCT without Error Correction"
 
-        else:  # LSB
+        # =========================================================
+        # LSB SPATIAL DOMAIN
+        # =========================================================
+        else:
             stego_image = lsb.embed(cover_image, message)
             original_bits = lsb.text_to_bits(message)
             extracted_bits = lsb.extract(stego_image, len(original_bits))
@@ -137,34 +180,30 @@ def embed_message():
         output_path = os.path.join(app.config['UPLOAD_FOLDER'], f'stego_{timestamp}.png')
         cv2.imwrite(output_path, cv2.cvtColor(stego_image, cv2.COLOR_RGB2BGR))
 
-        # Convert to base64 for display
+        # Convert to base64
         _, buffer = cv2.imencode('.png', cv2.cvtColor(stego_image, cv2.COLOR_RGB2BGR))
         img_base64 = base64.b64encode(buffer).decode('utf-8')
 
         # Calculate metrics
         original_bits = text_to_bits(message)
-
-        if method == 'proposed':
-            extracted_bits = decoded_bits
-            ber = metrics.bit_error_rate(original_bits, extracted_bits)
+        recovered_bits = text_to_bits(recovered_text) if recovered_text else []
+        
+        min_len = min(len(original_bits), len(recovered_bits))
+        if min_len > 0:
+            errors = sum(original_bits[i] != recovered_bits[i] for i in range(min_len))
+            ber = errors / min_len
         else:
-            # For other methods, compare recovered text bits
-            recovered_bits = text_to_bits(recovered_text) if recovered_text else []
-            min_len = min(len(original_bits), len(recovered_bits))
-            if min_len > 0:
-                errors = sum(original_bits[i] != recovered_bits[i] for i in range(min_len))
-                ber = errors / min_len
-            else:
-                ber = 1.0
+            ber = 1.0
 
         recovery_acc = metrics.text_recovery_accuracy(message, recovered_text)
         psnr = metrics.psnr(cover_image, stego_image)
         ssim = metrics.ssim_index(cover_image, stego_image)
 
-        # Check if recovered text matches
-        message_matches = (recovered_text == message)
-        print(f"✅ Message matches: {message_matches}")
-        print(f"📊 Recovery accuracy: {recovery_acc:.1f}%")
+        message_matches = (recovered_text.strip() == message.strip())
+
+        print(f"📝 Recovered: '{recovered_text[:50]}...'")
+        print(f"✅ Match: {message_matches}")
+        print(f"📊 PSNR: {psnr:.2f} dB, BER: {ber:.4f}, Recovery: {recovery_acc:.1f}%")
 
         return jsonify({
             'success': True,
@@ -190,10 +229,7 @@ def embed_message():
 
 @app.route('/extract', methods=['POST'])
 def extract_message():
-    """
-    Extract hidden message from stego image.
-    Uses updated text_utils for proper decoding.
-    """
+    """Extract hidden message using Reed-Solomon."""
     try:
         if 'image' not in request.files:
             return jsonify({'error': 'No image uploaded'}), 400
@@ -202,7 +238,6 @@ def extract_message():
         method = request.form.get('method', 'proposed')
         message_length = int(request.form.get('message_length', 100))
 
-        # Read and validate image
         img_bytes = file.read()
         nparr = np.frombuffer(img_bytes, np.uint8)
         stego_image = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
@@ -213,67 +248,66 @@ def extract_message():
         stego_image = cv2.cvtColor(stego_image, cv2.COLOR_BGR2RGB)
         h, w = stego_image.shape[:2]
 
-        if h < 32 or w < 32:
-            return jsonify({'error': f'Image too small ({h}x{w}). Minimum 32x32 pixels required'}), 400
+        if h < 64 or w < 64:
+            return jsonify({'error': f'Image too small ({h}x{w}). Minimum 64x64 pixels required'}), 400
 
         recovered_text = ""
         method_name = ""
 
         if method == 'proposed':
-            # Estimate number of encoded bits
+            # Estimate needed bits
+            # Typical: ~(message_length * 8) data + 192 ECC per 255-byte block, ×4 copies
             capacity = embedder.get_capacity(stego_image.shape)
-            # Each char = 8 bits, Hamming adds 75% overhead
-            estimated_bits = min(capacity, int(message_length * 8 * 1.75) + 20)
-
-            extracted_encoded = extractor.extract(stego_image, estimated_bits)
-
-            # Try different padding values to find the correct one
+            
+            # Try different bit lengths to find the right one
             best_text = ""
             best_score = 0
-
-            for padding in range(8):
-                try:
-                    padding_info = (padding, 0)
-                    decoded_bits, _ = Hamming74.decode_bitstream(extracted_encoded, padding_info)
-                    text = bits_to_text(decoded_bits)
-
-                    # Score: prefer text with more printable characters
-                    printable = sum(1 for c in text if 32 <= ord(c) <= 126 or c in '\n\r\t')
-                    alnum = sum(1 for c in text if c.isalnum() or c.isspace())
-                    score = printable + alnum * 2
-
-                    if score > best_score:
-                        best_score = score
-                        best_text = text
-                except Exception:
-                    continue
-
+            
+            # Try a range of bit lengths
+            for msg_len_guess in [message_length, message_length + 20, message_length + 50]:
+                # Estimate total encoded bits
+                # For RS(255,63): 63 data bytes → 255 bytes → 2040 bits per block
+                # Rough estimate: 30 bits per character with RS + repetition
+                estimated_bits = min(capacity, int(msg_len_guess * 30) + 500)
+                
+                extracted = extractor.extract(stego_image, estimated_bits)
+                
+                # Try decoding with different copies
+                for copy_len in [len(extracted) // RS_COPIES, 
+                                 len(extracted) // 4,
+                                 int(estimated_bits * 0.9)]:
+                    if copy_len <= 0:
+                        continue
+                    text = decode_with_rs(extracted, (len(extracted), msg_len_guess), copy_len)
+                    if text:
+                        printable = sum(1 for c in text if 32 <= ord(c) <= 126)
+                        score = printable
+                        if score > best_score:
+                            best_score = score
+                            best_text = text
+            
             recovered_text = best_text
             method_name = "Proposed EDC-HC"
 
         elif method == 'dct_no_ec':
-            capacity = dct_no_ec.get_capacity(stego_image.shape)
-            estimated_bits = min(capacity, int(message_length * 8) + 20)
+            estimated_bits = min(
+                dct_no_ec.get_capacity(stego_image.shape),
+                int(message_length * 8) + 20
+            )
             extracted_bits = dct_no_ec.extract(stego_image, estimated_bits)
             recovered_text = bits_to_text(extracted_bits)
             method_name = "DCT without Error Correction"
 
-        else:  # LSB
-            capacity = stego_image.shape[0] * stego_image.shape[1] * 3
-            estimated_bits = min(capacity, int(message_length * 8) + 20)
+        else:
+            estimated_bits = min(
+                stego_image.shape[0] * stego_image.shape[1] * 3,
+                int(message_length * 8) + 20
+            )
             extracted_bits = lsb.extract(stego_image, estimated_bits)
             recovered_text = lsb.bits_to_text(extracted_bits)
             method_name = "LSB Spatial Domain"
 
-        # Clean extracted text (keep only printable characters)
         cleaned = ''.join(c for c in recovered_text if 32 <= ord(c) <= 126 or c in '\n\r\t')
-
-        # If we got nothing, try fallback
-        if not cleaned and recovered_text:
-            # Sometimes text has null characters - remove them
-            cleaned = recovered_text.replace('\x00', '')
-            if cleaned:
-                cleaned = ''.join(c for c in cleaned if 32 <= ord(c) <= 126 or c in '\n\r\t')
 
         return jsonify({
             'success': True,
@@ -291,10 +325,7 @@ def extract_message():
 
 @app.route('/classify', methods=['POST'])
 def classify_image():
-    """
-    Show edge/smooth block classification visualization.
-    Uses OpenCV for rendering (no matplotlib dependency).
-    """
+    """Show edge/smooth block classification visualization."""
     try:
         if 'image' not in request.files:
             return jsonify({'error': 'No image uploaded'}), 400
@@ -308,20 +339,12 @@ def classify_image():
             return jsonify({'error': 'Invalid image format'}), 400
 
         image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
-        h, w = image.shape[:2]
-
-        if h < 32 or w < 32:
-            return jsonify({'error': f'Image too small ({h}x{w}). Minimum 32x32 pixels required'}), 400
-
-        # Get classification map
         class_map = embedder.get_classification_map(image)
 
-        # Create visualization
         h, w = image.shape[:2]
         block_h = h // 8
         block_w = w // 8
 
-        # Create overlay
         overlay = image.astype(np.float32) / 255.0
         color_overlay = np.zeros_like(overlay, dtype=np.float32)
 
@@ -332,30 +355,24 @@ def classify_image():
                 x1 = bc * block_w
                 x2 = (bc + 1) * block_w
 
-                if class_map[br, bc] == 1:  # Edge block - RED
+                if class_map[br, bc] == 1:
                     color_overlay[y1:y2, x1:x2] = [1.0, 0.0, 0.0]
-                else:  # Smooth block - GREEN
+                else:
                     color_overlay[y1:y2, x1:x2] = [0.0, 1.0, 0.0]
 
-        # Blend
         alpha = 0.3
         blended = (1 - alpha) * overlay + alpha * color_overlay
         blended = np.clip(blended * 255, 0, 255).astype(np.uint8)
 
-        # Draw borders
         for br in range(class_map.shape[0]):
             for bc in range(class_map.shape[1]):
                 y1 = br * block_h
                 y2 = (br + 1) * block_h
                 x1 = bc * block_w
                 x2 = (bc + 1) * block_w
+                color = (255, 0, 0) if class_map[br, bc] == 1 else (0, 255, 0)
+                cv2.rectangle(blended, (x1, y1), (x2, y2), color, 1)
 
-                if class_map[br, bc] == 1:
-                    cv2.rectangle(blended, (x1, y1), (x2, y2), (255, 0, 0), 1)
-                else:
-                    cv2.rectangle(blended, (x1, y1), (x2, y2), (0, 255, 0), 1)
-
-        # Convert to base64
         _, buffer = cv2.imencode('.png', cv2.cvtColor(blended, cv2.COLOR_RGB2BGR))
         img_base64 = base64.b64encode(buffer).decode('utf-8')
 
@@ -381,9 +398,7 @@ def classify_image():
 
 @app.route('/compare', methods=['POST'])
 def compare_methods():
-    """
-    Compare all three methods on the same image and message.
-    """
+    """Compare all three methods."""
     try:
         if 'image' not in request.files:
             return jsonify({'error': 'No image uploaded'}), 400
@@ -392,7 +407,7 @@ def compare_methods():
         message = request.form.get('message', '')
 
         if not message:
-            return jsonify({'error': 'No message provided for comparison'}), 400
+            return jsonify({'error': 'No message provided'}), 400
 
         img_bytes = file.read()
         nparr = np.frombuffer(img_bytes, np.uint8)
@@ -402,69 +417,87 @@ def compare_methods():
             return jsonify({'error': 'Invalid image format'}), 400
 
         cover_image = cv2.cvtColor(cover_image, cv2.COLOR_BGR2RGB)
-        h, w = cover_image.shape[:2]
-
-        if h < 32 or w < 32:
-            return jsonify({'error': f'Image too small ({h}x{w}). Minimum 32x32 pixels required'}), 400
 
         results = {}
-        methods = {
-            'proposed': ('Proposed EDC-HC', embedder, extractor, True),
-            'dct_no_ec': ('DCT without EC', dct_no_ec, dct_no_ec, False),
-            'lsb': ('LSB', lsb, lsb, False)
-        }
 
-        for method_key, (method_name, embed, extract, use_hamming) in methods.items():
-            try:
-                if use_hamming:
-                    original_bits = text_to_bits(message)
-                    encoded_bits, padding_info = Hamming74.encode_bitstream(original_bits)
-                    capacity = embed.get_capacity(cover_image.shape)
+        # --- Proposed (DCT + RS) ---
+        try:
+            encoded_bits, padding_info = encode_with_rs(message)
+            single_copy_length = len(encoded_bits) // RS_COPIES
 
-                    if len(encoded_bits) <= capacity:
-                        stego, _ = embed.embed(cover_image, encoded_bits)
-                        extracted_encoded = extract.extract(stego, len(encoded_bits))
-                        decoded_bits, _ = Hamming74.decode_bitstream(extracted_encoded, padding_info)
-                        recovered = bits_to_text(decoded_bits)
-
-                        # Get classification info
-                        class_map = embed.get_classification_map(cover_image)
-                        extra = f"Edge: {int(np.sum(class_map))}, Smooth: {class_map.size - int(np.sum(class_map))}"
-                    else:
-                        recovered = "Message too long"
-                        extra = "N/A"
-                else:
-                    if method_key == 'lsb':
-                        stego = embed.embed(cover_image, message)
-                        original_bits = embed.text_to_bits(message)
-                        extracted = embed.extract(stego, len(original_bits))
-                        recovered = embed.bits_to_text(extracted)
-                        extra = "N/A"
-                    else:
-                        stego, num = embed.embed(cover_image, message)
-                        extracted = embed.extract(stego, num)
-                        recovered = bits_to_text(extracted)
-                        extra = "N/A"
+            if len(encoded_bits) <= embedder.get_capacity(cover_image.shape):
+                stego, _ = embedder.embed(cover_image, encoded_bits)
+                extracted = extractor.extract(stego, len(encoded_bits))
+                recovered = decode_with_rs(extracted, padding_info, single_copy_length)
 
                 psnr = metrics.psnr(cover_image, stego)
                 ssim = metrics.ssim_index(cover_image, stego)
-
-                # Calculate recovery accuracy
-                matches = sum(message[i] == recovered[i] for i in range(min(len(message), len(recovered))))
+                matches = sum(1 for i in range(min(len(message), len(recovered))) 
+                             if message[i] == recovered[i])
                 recovery_acc = (matches / len(message)) * 100 if message else 0
 
-                results[method_key] = {
-                    'name': method_name,
+                results['proposed'] = {
+                    'name': 'Proposed EDC-HC',
                     'psnr': round(psnr, 2),
                     'ssim': round(ssim, 4),
                     'recovery_accuracy': round(recovery_acc, 1),
-                    'message_recovered': recovered[:100] + ('...' if len(recovered) > 100 else ''),
-                    'message_matches': recovered == message,
-                    'extra': extra
+                    'message_recovered': recovered[:100],
+                    'message_matches': recovered.strip() == message.strip(),
+                    'extra': f'{RS_COPIES} copies, RS({RS_DATA_SYMBOLS},{RS_ECC_SYMBOLS})'
                 }
+            else:
+                results['proposed'] = {'error': 'Message too long'}
+        except Exception as e:
+            results['proposed'] = {'error': str(e)}
 
-            except Exception as e:
-                results[method_key] = {'error': str(e)}
+        # --- DCT no EC ---
+        try:
+            stego, num = dct_no_ec.embed(cover_image, message)
+            extracted = dct_no_ec.extract(stego, num)
+            recovered = bits_to_text(extracted)
+
+            psnr = metrics.psnr(cover_image, stego)
+            ssim = metrics.ssim_index(cover_image, stego)
+            matches = sum(1 for i in range(min(len(message), len(recovered))) 
+                         if message[i] == recovered[i])
+            recovery_acc = (matches / len(message)) * 100 if message else 0
+
+            results['dct_no_ec'] = {
+                'name': 'DCT without EC',
+                'psnr': round(psnr, 2),
+                'ssim': round(ssim, 4),
+                'recovery_accuracy': round(recovery_acc, 1),
+                'message_recovered': recovered[:100],
+                'message_matches': recovered.strip() == message.strip(),
+                'extra': 'No error correction'
+            }
+        except Exception as e:
+            results['dct_no_ec'] = {'error': str(e)}
+
+        # --- LSB ---
+        try:
+            stego = lsb.embed(cover_image, message)
+            original_bits = lsb.text_to_bits(message)
+            extracted = lsb.extract(stego, len(original_bits))
+            recovered = lsb.bits_to_text(extracted)
+
+            psnr = metrics.psnr(cover_image, stego)
+            ssim = metrics.ssim_index(cover_image, stego)
+            matches = sum(1 for i in range(min(len(message), len(recovered))) 
+                         if message[i] == recovered[i])
+            recovery_acc = (matches / len(message)) * 100 if message else 0
+
+            results['lsb'] = {
+                'name': 'LSB Spatial',
+                'psnr': round(psnr, 2),
+                'ssim': round(ssim, 4),
+                'recovery_accuracy': round(recovery_acc, 1),
+                'message_recovered': recovered[:100],
+                'message_matches': recovered.strip() == message.strip(),
+                'extra': 'Spatial domain'
+            }
+        except Exception as e:
+            results['lsb'] = {'error': str(e)}
 
         return jsonify({
             'success': True,
@@ -480,7 +513,7 @@ def compare_methods():
 
 @app.route('/download/<filename>')
 def download_file(filename):
-    """Download stego image file."""
+    """Download stego image."""
     if '..' in filename or filename.startswith('/'):
         return jsonify({'error': 'Invalid filename'}), 404
 
@@ -493,28 +526,27 @@ def download_file(filename):
 
 @app.route('/health')
 def health_check():
-    """Health check endpoint for monitoring."""
     return jsonify({
         'status': 'healthy',
         'timestamp': datetime.now().isoformat(),
-        'version': '1.0.0'
+        'version': '2.0.0',
+        'rs_params': {
+            'data_symbols': RS_DATA_SYMBOLS,
+            'ecc_symbols': RS_ECC_SYMBOLS,
+            'copies': RS_COPIES
+        }
     })
 
 
 if __name__ == '__main__':
     print("\n" + "="*60)
-    print("🌐 Steganography Web Interface - EDC-HC")
+    print("🌐 Steganography Web Interface — EDC-HC (Reed-Solomon)")
     print("="*60)
     print(f"📊 Configuration:")
     print(f"   α_edge = {config.EMBEDDING_STRENGTH_EDGE}")
     print(f"   α_smooth = {config.EMBEDDING_STRENGTH_SMOOTH}")
-    print(f"   Edge Threshold = {config.EDGE_DENSITY_THRESHOLD}")
-    print(f"   Block Size = {config.BLOCK_SIZE}")
+    print(f"   RS({RS_DATA_SYMBOLS}, {RS_ECC_SYMBOLS}) × {RS_COPIES} copies")
     print("="*60)
     print("🚀 Starting server at: http://localhost:5000")
-    print("📁 Upload folder: uploads/")
-    print("📊 Results folder: results/")
-    print("🛑 Press CTRL+C to stop")
     print("="*60 + "\n")
-
     app.run(debug=True, host='0.0.0.0', port=5000)
