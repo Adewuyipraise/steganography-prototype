@@ -1,0 +1,4 @@
+# secret_message.py
+SECRET_MESSAGE = """The rapid advancement of digital communication has created an urgent need for secure methods of transmitting sensitive information across public networks. Traditional encryption protects the content of messages but leaves visible evidence of communication, which is often sufficient to attract unwanted attention. Steganography addresses this limitation by concealing the very existence of the message within an innocuous carrier medium such as an image. When combined with error correction coding, modern steganographic techniques can ensure that hidden information survives the compression and transformation that occur routinely on social media platforms and messaging applications, enabling reliable text recovery for legitimate users who require confidentiality."""
+
+print(f"Length: {len(SECRET_MESSAGE)} characters")
