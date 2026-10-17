@@ -9,7 +9,6 @@ import base64
 from datetime import datetime
 import sys
 
-# Add project root to path
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 import config
@@ -37,15 +36,30 @@ dct_no_ec = DCTWithoutEC(config)
 metrics = MetricsCalculator()
 tester = TransformationTester(config)
 
-# Reed-Solomon settings (match main.py)
-RS_DATA_SYMBOLS = 63
-RS_ECC_SYMBOLS = 192
+# Reed-Solomon settings
+RS_DATA_SYMBOLS = 127
+RS_ECC_SYMBOLS = 128
 RS_INTERLEAVE_DEPTH = 4
-RS_COPIES = 4
 
 
-def encode_with_rs(text):
-    """Encode text using Reed-Solomon with repetition."""
+def estimate_capacity_bits(image_shape):
+    """Estimate usable embedding capacity in bits."""
+    return embedder.get_capacity(image_shape)
+
+
+def calculate_required_bits(message):
+    """
+    Calculate required bits for a message with RS encoding.
+    RS(127,128): 127 data bytes + 128 ECC = 255 total, so 2x expansion.
+    """
+    data_bits = len(message) * 8
+    # RS roughly doubles (255/127 ≈ 2.0)
+    rs_bits = int(data_bits * 255 / 127) + 512
+    return rs_bits
+
+
+def encode_with_rs(text, copies=2):
+    """Encode text using Reed-Solomon with configurable repetition."""
     bits = text_to_bits(text)
     rs = TurboReedSolomon(
         data_symbols=RS_DATA_SYMBOLS,
@@ -53,13 +67,12 @@ def encode_with_rs(text):
         interleave_depth=RS_INTERLEAVE_DEPTH
     )
     encoded_bits, padding_info = rs.encode_bitstream(bits)
-    # Add repetition
-    repeated = encoded_bits * RS_COPIES
-    return repeated, padding_info
+    repeated = encoded_bits * copies
+    return repeated, padding_info, len(encoded_bits)
 
 
-def decode_with_rs(extracted_bits, padding_info, single_copy_length):
-    """Decode using Reed-Solomon, trying each of the 4 copies."""
+def decode_with_rs(extracted_bits, padding_info, single_copy_length, copies=2):
+    """Decode using Reed-Solomon, trying each copy."""
     rs = TurboReedSolomon(
         data_symbols=RS_DATA_SYMBOLS,
         ecc_symbols=RS_ECC_SYMBOLS,
@@ -69,7 +82,7 @@ def decode_with_rs(extracted_bits, padding_info, single_copy_length):
     best_text = ""
     best_score = 0
     
-    for copy_idx in range(RS_COPIES):
+    for copy_idx in range(copies):
         start = copy_idx * single_copy_length
         end = start + single_copy_length
         if end > len(extracted_bits):
@@ -81,7 +94,6 @@ def decode_with_rs(extracted_bits, padding_info, single_copy_length):
             decoded_bits, _ = rs.decode_bitstream(single_copy, padding_info)
             text = bits_to_text(decoded_bits)
             
-            # Score by printable character ratio
             if text:
                 printable = sum(1 for c in text if 32 <= ord(c) <= 126)
                 score = printable / max(len(text), 1) * len(text)
@@ -101,7 +113,7 @@ def index():
 
 @app.route('/embed', methods=['POST'])
 def embed_message():
-    """Handle image upload and message embedding with Reed-Solomon."""
+    """Handle image upload and message embedding with adaptive RS."""
     try:
         if 'image' not in request.files:
             return jsonify({'error': 'No image uploaded'}), 400
@@ -126,48 +138,58 @@ def embed_message():
         cover_image = cv2.cvtColor(cover_image, cv2.COLOR_BGR2RGB)
         h, w = cover_image.shape[:2]
 
-        if h < 64 or w < 64:
-            return jsonify({'error': f'Image too small ({h}x{w}). Minimum 64x64 pixels required'}), 400
+        if h < 128 or w < 128:
+            return jsonify({'error': f'Image too small ({h}x{w}). Minimum 128x128 pixels required'}), 400
 
         print(f"\n📝 Embedding: '{message[:50]}...' ({len(message)} chars)")
         print(f"📸 Image: {w}x{h}")
 
         # =========================================================
-        # PROPOSED: DCT + Reed-Solomon + Repetition
+        # PROPOSED: DCT + Reed-Solomon + ADAPTIVE REPETITION
         # =========================================================
         if method == 'proposed':
-            # Encode with RS + repetition
-            encoded_bits, padding_info = encode_with_rs(message)
-            single_copy_length = len(encoded_bits) // RS_COPIES
-            print(f"📊 Encoded bits: {len(encoded_bits)} ({single_copy_length} × {RS_COPIES} copies)")
+            capacity = estimate_capacity_bits(cover_image.shape)
+            required_single = calculate_required_bits(message)
+            
+            # Adaptive copies: reduce copies if image is small
+            if required_single * 2 <= capacity:
+                copies = 2
+            elif required_single <= capacity:
+                copies = 1
+            else:
+                # Try shrinking RS overhead by reducing ECC
+                # Calculate minimum required image size
+                min_pixels = int(np.ceil(np.sqrt(required_single * 64 / 26)))
+                return jsonify({
+                    'error': f'Message too long for this image ({len(message)} chars). '
+                             f'Required ~{required_single} bits, image has {capacity} bits. '
+                             f'Try an image at least {min_pixels}x{min_pixels} pixels, '
+                             f'or use a shorter message (max ~{capacity // 30} chars).'
+                }), 400
+            
+            print(f"📊 Capacity: {capacity} bits, required: {required_single * copies} bits, copies: {copies}")
+            
+            encoded_bits, padding_info, single_copy_length = encode_with_rs(message, copies=copies)
+            print(f"📊 Encoded bits: {len(encoded_bits)} ({single_copy_length} × {copies} copies)")
 
-            capacity = embedder.get_capacity(cover_image.shape)
             if len(encoded_bits) > capacity:
                 return jsonify({
-                    'error': f'Message too long. Try a shorter message.'
+                    'error': f'Encoded message too long. Required: {len(encoded_bits)} bits, '
+                             f'capacity: {capacity} bits. Use a shorter message or larger image.'
                 }), 400
 
-            # Embed
             stego_image, _ = embedder.embed(cover_image, encoded_bits)
-
-            # Verify by extracting
             extracted = extractor.extract(stego_image, len(encoded_bits))
-            recovered_text = decode_with_rs(extracted, padding_info, single_copy_length)
+            recovered_text = decode_with_rs(extracted, padding_info, single_copy_length, copies=copies)
 
-            method_name = "Proposed EDC-HC (DCT + Reed-Solomon)"
+            method_name = f"Proposed EDC-HC (DCT + RS, {copies} copy)"
 
-        # =========================================================
-        # DCT WITHOUT ERROR CORRECTION
-        # =========================================================
         elif method == 'dct_no_ec':
             stego_image, num_bits = dct_no_ec.embed(cover_image, message)
             extracted_bits = dct_no_ec.extract(stego_image, num_bits)
             recovered_text = bits_to_text(extracted_bits)
             method_name = "DCT without Error Correction"
 
-        # =========================================================
-        # LSB SPATIAL DOMAIN
-        # =========================================================
         else:
             stego_image = lsb.embed(cover_image, message)
             original_bits = lsb.text_to_bits(message)
@@ -175,16 +197,13 @@ def embed_message():
             recovered_text = lsb.bits_to_text(extracted_bits)
             method_name = "LSB Spatial Domain"
 
-        # Save stego image
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         output_path = os.path.join(app.config['UPLOAD_FOLDER'], f'stego_{timestamp}.png')
         cv2.imwrite(output_path, cv2.cvtColor(stego_image, cv2.COLOR_RGB2BGR))
 
-        # Convert to base64
         _, buffer = cv2.imencode('.png', cv2.cvtColor(stego_image, cv2.COLOR_RGB2BGR))
         img_base64 = base64.b64encode(buffer).decode('utf-8')
 
-        # Calculate metrics
         original_bits = text_to_bits(message)
         recovered_bits = text_to_bits(recovered_text) if recovered_text else []
         
@@ -248,46 +267,42 @@ def extract_message():
         stego_image = cv2.cvtColor(stego_image, cv2.COLOR_BGR2RGB)
         h, w = stego_image.shape[:2]
 
-        if h < 64 or w < 64:
-            return jsonify({'error': f'Image too small ({h}x{w}). Minimum 64x64 pixels required'}), 400
+        if h < 128 or w < 128:
+            return jsonify({'error': f'Image too small ({h}x{w}). Minimum 128x128 pixels required'}), 400
 
         recovered_text = ""
         method_name = ""
 
         if method == 'proposed':
-            # Estimate needed bits
-            # Typical: ~(message_length * 8) data + 192 ECC per 255-byte block, ×4 copies
-            capacity = embedder.get_capacity(stego_image.shape)
+            capacity = estimate_capacity_bits(stego_image.shape)
             
-            # Try different bit lengths to find the right one
+            # Try multiple copies settings and bit lengths
             best_text = ""
             best_score = 0
             
-            # Try a range of bit lengths
-            for msg_len_guess in [message_length, message_length + 20, message_length + 50]:
-                # Estimate total encoded bits
-                # For RS(255,63): 63 data bytes → 255 bytes → 2040 bits per block
-                # Rough estimate: 30 bits per character with RS + repetition
-                estimated_bits = min(capacity, int(msg_len_guess * 30) + 500)
+            for copies_guess in [2, 1]:
+                # Estimate single copy length
+                required_single = calculate_required_bits("X" * message_length)
+                single_guess = min(required_single, capacity // copies_guess)
                 
-                extracted = extractor.extract(stego_image, estimated_bits)
+                if single_guess <= 0:
+                    continue
                 
-                # Try decoding with different copies
-                for copy_len in [len(extracted) // RS_COPIES, 
-                                 len(extracted) // 4,
-                                 int(estimated_bits * 0.9)]:
-                    if copy_len <= 0:
-                        continue
-                    text = decode_with_rs(extracted, (len(extracted), msg_len_guess), copy_len)
-                    if text:
-                        printable = sum(1 for c in text if 32 <= ord(c) <= 126)
-                        score = printable
-                        if score > best_score:
-                            best_score = score
-                            best_text = text
+                total_bits = single_guess * copies_guess
+                extracted = extractor.extract(stego_image, total_bits)
+                
+                text = decode_with_rs(extracted, (len(extracted), message_length), single_guess, copies=copies_guess)
+                if text:
+                    printable = sum(1 for c in text if 32 <= ord(c) <= 126)
+                    score = printable
+                    if score > best_score:
+                        best_score = score
+                        best_text = text
+                        method_name = f"Proposed EDC-HC ({copies_guess} copy)"
             
             recovered_text = best_text
-            method_name = "Proposed EDC-HC"
+            if not method_name:
+                method_name = "Proposed EDC-HC"
 
         elif method == 'dct_no_ec':
             estimated_bits = min(
@@ -422,31 +437,40 @@ def compare_methods():
 
         # --- Proposed (DCT + RS) ---
         try:
-            encoded_bits, padding_info = encode_with_rs(message)
-            single_copy_length = len(encoded_bits) // RS_COPIES
-
-            if len(encoded_bits) <= embedder.get_capacity(cover_image.shape):
-                stego, _ = embedder.embed(cover_image, encoded_bits)
-                extracted = extractor.extract(stego, len(encoded_bits))
-                recovered = decode_with_rs(extracted, padding_info, single_copy_length)
-
-                psnr = metrics.psnr(cover_image, stego)
-                ssim = metrics.ssim_index(cover_image, stego)
-                matches = sum(1 for i in range(min(len(message), len(recovered))) 
-                             if message[i] == recovered[i])
-                recovery_acc = (matches / len(message)) * 100 if message else 0
-
-                results['proposed'] = {
-                    'name': 'Proposed EDC-HC',
-                    'psnr': round(psnr, 2),
-                    'ssim': round(ssim, 4),
-                    'recovery_accuracy': round(recovery_acc, 1),
-                    'message_recovered': recovered[:100],
-                    'message_matches': recovered.strip() == message.strip(),
-                    'extra': f'{RS_COPIES} copies, RS({RS_DATA_SYMBOLS},{RS_ECC_SYMBOLS})'
-                }
+            capacity = estimate_capacity_bits(cover_image.shape)
+            required_single = calculate_required_bits(message)
+            
+            if required_single * 2 <= capacity:
+                copies = 2
+            elif required_single <= capacity:
+                copies = 1
             else:
-                results['proposed'] = {'error': 'Message too long'}
+                results['proposed'] = {'error': 'Message too long for this image'}
+                copies = 1
+            
+            if copies >= 1:
+                encoded_bits, padding_info, single_copy_length = encode_with_rs(message, copies=copies)
+
+                if len(encoded_bits) <= capacity:
+                    stego, _ = embedder.embed(cover_image, encoded_bits)
+                    extracted = extractor.extract(stego, len(encoded_bits))
+                    recovered = decode_with_rs(extracted, padding_info, single_copy_length, copies=copies)
+
+                    psnr = metrics.psnr(cover_image, stego)
+                    ssim = metrics.ssim_index(cover_image, stego)
+                    matches = sum(1 for i in range(min(len(message), len(recovered))) 
+                                 if message[i] == recovered[i])
+                    recovery_acc = (matches / len(message)) * 100 if message else 0
+
+                    results['proposed'] = {
+                        'name': 'Proposed EDC-HC',
+                        'psnr': round(psnr, 2),
+                        'ssim': round(ssim, 4),
+                        'recovery_accuracy': round(recovery_acc, 1),
+                        'message_recovered': recovered[:100],
+                        'message_matches': recovered.strip() == message.strip(),
+                        'extra': f'{copies} copies, RS({RS_DATA_SYMBOLS},{RS_ECC_SYMBOLS})'
+                    }
         except Exception as e:
             results['proposed'] = {'error': str(e)}
 
@@ -529,11 +553,11 @@ def health_check():
     return jsonify({
         'status': 'healthy',
         'timestamp': datetime.now().isoformat(),
-        'version': '2.0.0',
+        'version': '2.1.0',
         'rs_params': {
             'data_symbols': RS_DATA_SYMBOLS,
             'ecc_symbols': RS_ECC_SYMBOLS,
-            'copies': RS_COPIES
+            'adaptive_copies': '1 or 2 based on image size'
         }
     })
 
@@ -545,7 +569,7 @@ if __name__ == '__main__':
     print(f"📊 Configuration:")
     print(f"   α_edge = {config.EMBEDDING_STRENGTH_EDGE}")
     print(f"   α_smooth = {config.EMBEDDING_STRENGTH_SMOOTH}")
-    print(f"   RS({RS_DATA_SYMBOLS}, {RS_ECC_SYMBOLS}) × {RS_COPIES} copies")
+    print(f"   RS({RS_DATA_SYMBOLS}, {RS_ECC_SYMBOLS}) with adaptive copies")
     print("="*60)
     print("🚀 Starting server at: http://localhost:5000")
     print("="*60 + "\n")
