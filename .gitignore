@@ -16,3 +16,10 @@ venv/
 env/
 VENV/
 __pycache__/
+
+# Test outputs
+*_stego.png
+test_*.png
+verify_*.png
+diagnose_*.png
+wget-log

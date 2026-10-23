@@ -202,7 +202,7 @@
 <body>
     <div class="container">
         <h1>🖼️ Steganography Prototype</h1>
-        <p class="subtitle">Hide secret messages in images using DCT + Hamming(7,4) Error Correction</p>
+        <p class="subtitle">Hide secret messages in images using DCT +  Reed-Solomon Error Correction</p>
         
         <div class="tabs">
             <button class="tab active" onclick="showPanel('embed')">🔒 Embed Message</button>
@@ -217,7 +217,7 @@
                 <div>
                     <h3>📤 Upload Cover Image</h3>
                     <div class="upload-area" onclick="document.getElementById('embedImage').click()">
-                        <input type="file" id="embedImage" accept="image/*" onchange="previewImage(this, 'embedPreview')">
+                        <input type="file" id="embedImage" accept="image/png, image/jpeg, image/tiff, image/bmp" onchange="previewImage(this, 'embedPreview')">
                         <p>📁 Click to upload or drag & drop</p>
                         <p style="font-size: 12px; color: #666;">PNG, JPG, JPEG supported</p>
                         <img id="embedPreview" class="preview-image" style="display: none;">
@@ -228,7 +228,7 @@
                     
                     <h3>⚙️ Select Method</h3>
                     <select id="embedMethod">
-                        <option value="proposed">✅ Proposed (DCT + Hamming + Edge Detection) - BEST</option>
+                        <option value="proposed">✅ Proposed (DCT +  Reed-Solomon Error Correction) - BEST</option>
                         <option value="dct_no_ec">📊 DCT without Error Correction</option>
                         <option value="lsb">💾 LSB Spatial Domain</option>
                     </select>
@@ -251,7 +251,7 @@
                 <div>
                     <h3>📥 Upload Stego Image</h3>
                     <div class="upload-area" onclick="document.getElementById('extractImage').click()">
-                        <input type="file" id="extractImage" accept="image/*" onchange="previewImage(this, 'extractPreview')">
+                        <input type="file" id="extractImage" accept="image/png, image/jpeg, image/tiff, image/bmp" onchange="previewImage(this, 'extractPreview')">
                         <p>📁 Click to upload image with hidden message</p>
                         <img id="extractPreview" class="preview-image" style="display: none;">
                     </div>
@@ -261,14 +261,14 @@
                         <strong>⚠️ IMPORTANT:</strong>
                         <p>You must use the SAME method for extraction that was used for embedding!</p>
                         <ul>
-                            <li>🔷 DCT+Hamming → Extract with DCT+Hamming</li>
+                            <li>🔷 DCT+ Reed-Solomon → Extract with DCT+ Reed-Solomon</li>
                             <li>🔶 DCT only → Extract with DCT only</li>
                             <li>⬛ LSB → Extract with LSB</li>
                         </ul>
                     </div>
 
                     <select id="extractMethod">
-                        <option value="proposed">🔷 Proposed (DCT + Hamming) - Use if embedded with proposed</option>
+                        <option value="proposed">🔷 Proposed (DCT +  Reed-Solomon Error Correction) - Use if embedded with proposed</option>
                         <option value="dct_no_ec">🔶 DCT without EC - Use if embedded with DCT only</option>
                         <option value="lsb">⬛ LSB Spatial - Use if embedded with LSB</option>
                     </select>

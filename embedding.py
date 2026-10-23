@@ -209,6 +209,40 @@ class DCTEmbedder:
         return stego_image.astype(np.uint8), bit_idx
     
     def get_classification_map(self, image):
+        """Generate a real Sobel-based edge classification map for visualization."""
         ycbcr = self._rgb_to_ycbcr(image).astype(np.float32)
-        h, w = ycbcr.shape[:2]
-        return np.ones((h // self.block_size, w // self.block_size))
+        luminance = ycbcr[:, :, 0]
+        h, w = luminance.shape
+        
+        # 1. Apply Sobel
+        grad_x = cv2.Sobel(luminance, cv2.CV_64F, 1, 0, ksize=3)
+        grad_y = cv2.Sobel(luminance, cv2.CV_64F, 0, 1, ksize=3)
+        edge_magnitude = np.sqrt(grad_x**2 + grad_y**2)
+        
+        # Normalize
+        if edge_magnitude.max() > 0:
+            edge_magnitude = edge_magnitude / edge_magnitude.max()
+            
+        # 2. Threshold
+        binary_edges = (edge_magnitude >= 0.15).astype(np.float32)
+        
+        # 3. Classify blocks
+        blocks_h = h // self.block_size
+        blocks_w = w // self.block_size
+        class_map = np.zeros((blocks_h, blocks_w))
+        
+        for br in range(blocks_h):
+            for bc in range(blocks_w):
+                r_start = br * self.block_size
+                r_end = r_start + self.block_size
+                c_start = bc * self.block_size
+                c_end = c_start + self.block_size
+                
+                block_edges = binary_edges[r_start:r_end, c_start:c_end]
+                edge_density = np.mean(block_edges)
+                
+                # If 30% or more pixels are edges, mark as 1 (Edge Block)
+                if edge_density >= 0.30:
+                    class_map[br, bc] = 1
+                    
+        return class_map
