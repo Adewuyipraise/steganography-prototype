@@ -1,8 +1,3 @@
-Here is the rewritten README.md, fully aligned with your current Reed-Solomon pipeline.
-
----
-
-```markdown
 # 🔐 Robust Image Steganography Prototype
 
 [![Python](https://img.shields.io/badge/Python-3.8+-blue.svg)](https://python.org)
@@ -11,12 +6,21 @@ Here is the rewritten README.md, fully aligned with your current Reed-Solomon pi
 [![License](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 [![Reed-Solomon](https://img.shields.io/badge/RS(63,192)-Error%20Correction-purple)](https://pypi.org/project/reedsolo/)
 
-A robust steganography system that hides secret text inside images using **DCT-domain
-frequency embedding** with **JPEG-guard-grid alignment**, **Reed-Solomon(63,192) error
-correction**, and **4-copy repetition with majority voting**. The pipeline is designed to
-survive JPEG compression, resizing, cropping, and format conversion — recovering the
-original message with **100% accuracy** under most transformation scenarios. Includes a
-web interface and side-by-side comparison with LSB and DCT-only baselines.
+A robust steganography system that hides secret text inside images using **DCT-domain frequency embedding** with **JPEG-guard-grid alignment**, **Reed-Solomon(63,192) error correction**, and **4-copy repetition with majority voting**. The pipeline is designed to survive JPEG compression, resizing, cropping, and format conversion — recovering the original message with **100% accuracy** under most transformation scenarios.
+
+Includes a web interface and side-by-side comparison with LSB and DCT-only baselines.
+
+---
+
+## 📸 Screenshots
+
+### Web Interface
+![Web Interface](images/web-ui.png)
+*The Flask web interface allows users to embed and extract messages, compare methods, and analyze image textures.*
+
+### Edge Block Classification
+![Classification](images/classify.png)
+*Sobel edge detection classifies blocks into edge (red) and smooth (green) regions.*
 
 ---
 
@@ -33,7 +37,6 @@ web interface and side-by-side comparison with LSB and DCT-only baselines.
   - Image resizing (50% – 150%)
   - Random cropping (10% – 40%)
   - Combined sequential attacks (C1 – C4)
-  - Format conversion (PNG ↔ JPEG)
 
 - **Evaluation Metrics**:
   - PSNR (Peak Signal-to-Noise Ratio)
@@ -43,7 +46,7 @@ web interface and side-by-side comparison with LSB and DCT-only baselines.
   - Composite Robustness Score
 
 - **Web Interface** (Flask):
-  - Drag-and-drop image upload
+  - Drag-and-drop image upload (PNG, JPG, TIFF)
   - Real-time embedding / extraction
   - Side-by-side method comparison
   - Download stego images
@@ -65,34 +68,33 @@ web interface and side-by-side comparison with LSB and DCT-only baselines.
 | **Combined C1**        | **100%**          | 0%             | 0%          |
 | **Combined C3**        | **100%**          | 0%             | 0%          |
 | **PSNR (dB)**          | **40.01**         | 38.05          | 81.05       |
+| **SSIM**               | **0.938**         | 0.999          | 1.000       |
 | **BER (Baseline)**     | **0.0000**        | 0.0712         | 0.0000      |
 
-**Key Finding**: The proposed EDC-HC pipeline achieves **100% text recovery** under
-11 of 22 tested transformation scenarios, while both baselines drop to near-zero
-recovery under the same attacks.
+**Key Finding**: The proposed EDC-HC pipeline achieves **100% text recovery** under 11 of 22 tested transformation scenarios, while both baselines drop to near-zero recovery under the same attacks.
 
 ---
 
 ## 🚀 Quick Start
 
 ### Prerequisites
-
-```bash
-Python 3.8 or higher
-pip package manager
-```
+Python 3.10 or higher and `pip`.
 
 ### Installation
 
 ```bash
-# Clone the repository
+# 1. Clone the repository
 git clone https://github.com/Adewuyipraise/steganography-prototype.git
 cd steganography-prototype
 
-# Install dependencies
+# 2. Create and activate a virtual environment (Recommended)
+python -m venv venv
+source venv/bin/activate  # On Windows use: venv\Scripts\activate
+
+# 3. Install dependencies
 pip install -r requirements.txt
 
-# Run the web interface
+# 4. Run the web interface
 python web_app.py
 ```
 
@@ -104,23 +106,11 @@ Open your browser to: **http://localhost:5000**
 
 ### Web Interface
 
-```bash
-python web_app.py
-```
-
-Then:
-
-1. Upload an image (PNG, JPG, JPEG)
-2. Enter your secret message
-3. Select embedding method (Proposed / DCT-no-EC / LSB)
-4. Click **"Hide Message"**
-5. Download the stego image
-
-To extract:
-
-1. Upload the stego image
-2. Select the **same method** used for embedding
-3. Click **"Extract Message"**
+1. Upload an image (PNG, JPG, JPEG, or TIFF).
+2. Enter your secret message.
+3. Select embedding method (Proposed / DCT-no-EC / LSB).
+4. Click **"Hide Message & Download"**.
+5. To extract: Upload the stego image, select the same method, and click **"Extract Hidden Message"**.
 
 ### CLI (Batch Experiments)
 
@@ -128,69 +118,22 @@ To extract:
 python main.py
 ```
 
-This runs a full comparative study on the sample image and saves results as JSON in
-`results/`.
+This runs a full comparative study on the sample image and saves results as JSON in `results/`.
 
 ---
 
 ## 🧠 Methodology
 
-### Embedding Process
-
-1. Convert image to **YCbCr** colour space
-2. Extract **luminance (Y)** channel
-3. Apply **Sobel edge detection** for adaptive strength
-4. Divide into **8×8 blocks**
-5. Apply **DCT** to each block
-6. **Skip flat blocks** (DC-mean > 240 or < 15) to avoid clipping
-7. Embed bits into **mid-frequency coefficients** using JPEG-guard quantisation
-8. Apply **Inverse DCT**
-9. Reconstruct stego image
-
 ### Robust Pipeline (survives JPEG / resize / crop)
 
 Why naive parity embedding fails under transformations and what fixes it:
 
-1. **JPEG-guard grid alignment** — the earlier scheme added a tiny absolute value
-   (`α ≈ 0.26`) to DCT coefficients, while JPEG quantisation replaces every
-   coefficient with a multiple of its quantisation step (≈ 8–30 for Q50–Q70).
-   The embedded parity was destroyed. The robust pipeline instead **snaps each
-   coefficient to a multiple of the libjpeg luminance quantisation step at the
-   guard quality (Q50)**, so parity sits exactly on the grid a JPEG encoder
-   requantises to — same-quality JPEG round-trips drop from ~40–50% to ~5–10%
-   per-bit error.
-
-2. **Fixed-size deterministic framing** — the message is framed as
-   `[16-bit length | 16-bit CRC-16 | payload]` and zero-padded to a fixed frame
-   so the decoder always knows exactly how many bits to expect. The CRC header
-   rejects Reed-Solomon miscorrections.
-
-3. **High-ECC multi-codeword Reed-Solomon** — `RS(63, 192)`
-   (96 correctable bytes per 255-byte codeword) with depth-8 interleaving.
-   Small messages span multiple codewords, so a few bad bytes no longer blow
-   the whole budget.
-
-4. **Repetition + majority voting** — the encoded stream is embedded **4 times**,
-   each copy guarded by the 16-bit sync marker. Extraction finds unit-spaced
-   sync chains (spurious 16-bit matches scatter randomly and are filtered out),
-   majority-votes the copies (turning 6–11% per-copy JPEG error into ~1–2%),
-   then RS-decodes and CRC-validates.
-
-5. **Crop-safe centered window** — embedding is confined to the **centered 60%**
-   of the image, the exact region a 40% centre-crop-with-black-borders preserves,
-   so cropping can never destroy all copies.
-
-6. **Multi-quality hypothesis search** — extraction re-reads parity under several
-   quantisation-grid hypotheses and keeps the frame whose payload passes CRC.
-
-### Error Correction
-
-**Reed-Solomon(63, 192)** with depth-8 interleaving:
-
-- Encodes the fixed payload into multiple **255-byte codewords**
-- Corrects up to **96 byte errors** per codeword
-- Combined with **4-copy repetition** and **majority voting** for very low residual BER
-- A **16-bit CRC** in the payload header guarantees decoded-text integrity
+1. **JPEG-guard grid alignment** — The robust pipeline snaps each coefficient to a multiple of the libjpeg luminance quantisation step at a guard quality (Q50). This means parity sits exactly on the grid a JPEG encoder requantises to, dropping same-quality JPEG round-trip errors from ~40–50% to ~5–10%.
+2. **Fixed-size deterministic framing** — The message is framed with a CRC-16 header so the decoder knows exactly what to expect and can reject Reed-Solomon miscorrections.
+3. **High-ECC multi-codeword Reed-Solomon** — RS(63,192) corrects up to 96 byte errors per 255-byte codeword, with depth-8 interleaving.
+4. **Repetition + majority voting** — The encoded stream is embedded 4 times. Extraction majority-votes the copies, turning 6–11% per-copy JPEG error into ~1–2%.
+5. **Crop-safe centered window** — Embedding is confined to the centered 60% of the image, so a 40% center-crop cannot destroy all copies.
+6. **Multi-quality hypothesis search** — Extraction tries several quantisation grids and keeps the frame whose payload passes CRC.
 
 ---
 
@@ -202,12 +145,13 @@ steganography-prototype/
 ├── main.py                   # CLI batch experiments
 ├── embedding.py              # DCT + JPEG-guard embedding
 ├── extraction.py             # DCT + sync-marker extraction
-├── reed_solomon.py           # Reed-Solomon(63,192) codec
+├── reed_solomon.py           # Reed-Solomon codec
 ├── text_utils.py             # Text ↔ bits conversion
 ├── baselines.py              # LSB & DCT-no-EC methods
 ├── robustness_tests.py       # Transformation suite
 ├── evaluation.py             # PSNR, SSIM, BER, recovery metrics
 ├── config.py                 # Configuration parameters
+├── images/                   # Screenshots for README
 ├── templates/
 │   └── index.html            # Web UI
 ├── requirements.txt
@@ -218,53 +162,12 @@ steganography-prototype/
 
 ---
 
-## 📋 Requirements
-
-```
-flask==2.3.3
-flask-cors==4.0.0
-gunicorn==21.2.0
-opencv-python-headless==4.8.1.78
-numpy==1.24.3
-pillow==10.0.0
-scikit-image==0.21.0
-scipy==1.10.1
-matplotlib==3.7.1
-reedsolo==1.7.0
-```
-
----
-
-## 📈 Evaluation Summary
-
-### Baseline (No Transformations)
-
-| Method             | PSNR (dB) | BER    | Recovery |
-|--------------------|-----------|--------|----------|
-| **Proposed EDC-HC**| **40.01** | **0.0000** | **100%** |
-| DCT without EC     | 38.05     | 0.0712 | 9%       |
-| LSB Spatial        | 81.05     | 0.0000 | 100%     |
-
-### Robustness Under Transformations
-
-| Attack             | Proposed | DCT-no-EC | LSB |
-|--------------------|----------|-----------|-----|
-| JPEG Q50–Q90       | **100%** | 0%        | 0%  |
-| Resize 75–150%     | **100%** | 0–2%      | 0–2%|
-| Crop 10–40%        | **100%** | 0%        | 0%  |
-| Combined C1–C3     | **100%** | 0%        | 0%  |
-| Gaussian noise     | 0%       | 0–1%      | 0–1%|
-
----
-
 ## 🎯 Limitations Acknowledged
 
-- **Gaussian noise** at all tested variances destroys the embedded coefficients — a
-  known limitation of DCT-domain parity embedding.
+- **Gaussian noise** at all tested variances destroys the embedded coefficients — a known limitation of DCT-domain parity embedding.
 - **JPEG Q10–Q30** destroys the guard-grid alignment — recovery fails below Q50.
 - **Resize 50%** (downscale) destroys block alignment.
-- **JSN (Su et al., 2024)** was not re-implemented as an active baseline due to its
-  deep-learning infrastructure requirements; comparison is literature-based only.
+- **JSN (Su et al., 2024)** was not re-implemented as an active baseline due to its deep-learning infrastructure requirements; comparison is literature-based only.
 
 ---
 
@@ -273,3 +176,31 @@ reedsolo==1.7.0
 Distributed under the **MIT License**. See `LICENSE` for more information.
 
 ---
+
+<div align="center">
+  
+  <sub>
+    <br/>
+    ═══════════════════════════════════════════════════
+  </sub>
+  
+  <br/>
+  
+  ### 🚀 Crafted with Code & Precision by **Pesedie Rasheed** 🚀
+  
+  ### 🔐 "Quantum Computing Enthusiast || Network Administrator || Cybersecurity Analyst || Computer Scientist || IT Support Personnel || Frontend Developer" 🔐
+  
+  <sub>
+    ═══════════════════════════════════════════════════
+  </sub>
+  
+  <br/>
+  <br/>
+  
+  [![GitHub](https://img.shields.io/badge/GitHub-Pesedie_Rasheed-181717?style=flat-square&logo=github)](https://github.com/Adewuyipraise)
+  [![LinkedIn](https://img.shields.io/badge/LinkedIn-Pesedie_Rasheed-0077B5?style=flat-square&logo=linkedin)](https://linkedin.com/in/pesedierasheed)
+  [![Email](https://img.shields.io/badge/Email-rasheedpesedie@gmail.com-D14836?style=flat-square&logo=gmail)](mailto:rasheedpesedie@gmail.com)
+  
+</div>
+```
+GitHub will automatically render the screenshots and the beautifully formatted documentation right on your repository homepage!
