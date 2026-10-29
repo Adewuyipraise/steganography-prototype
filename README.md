@@ -18,6 +18,9 @@ Includes a web interface and side-by-side comparison with LSB and DCT-only basel
 ![Web Interface](images/web-ui.png)
 *The Flask web interface allows users to embed and extract messages, compare methods, and analyze image textures.*
 
+### Before and After Embedding Interface
+![Before and After Interface](images/before-after.png)
+
 ### Edge Block Classification
 ![Classification](images/classify.png)
 *Sobel edge detection classifies blocks into edge (red) and smooth (green) regions.*
